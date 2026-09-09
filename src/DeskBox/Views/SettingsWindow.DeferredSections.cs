@@ -89,6 +89,7 @@ public sealed partial class SettingsWindow
             return;
         }
         section.Loaded -= DeferredSettingsSection_Loaded;
+        ApplyWebDavSettingsToView();
         ApplyToggleSwitchContentVisibility();
         CollectResponsiveRows(SettingsRoot);
         UpdateResponsiveLayout(GetWindowWidth());

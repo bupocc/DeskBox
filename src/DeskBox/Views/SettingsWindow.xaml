@@ -2560,6 +2560,8 @@ svc:Localized.DescriptionKey="Settings.DefaultWidth.Description"
                                 <FontIcon Glyph="&#xE74E;" />
                             </toolkit:SettingsCard.HeaderIcon>
                             <StackPanel Spacing="12">
+                                <Expander IsExpanded="True" Header="本地备份" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                                <StackPanel Spacing="12" HorizontalAlignment="Stretch">
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <Button x:Name="RestoreDataBackupButton" Click="RestoreDataBackupButton_Click" Style="{StaticResource ActionButtonStyle}" svc:Localized.ToolTipKey="Settings.DataBackup.RestoreTooltip">
                                         <StackPanel Orientation="Horizontal" Spacing="8"><FontIcon FontSize="14" Glyph="&#xE777;" /><TextBlock svc:Localized.Key="Settings.DataBackup.Restore" /></StackPanel>
@@ -2581,6 +2583,22 @@ svc:Localized.DescriptionKey="Settings.DefaultWidth.Description"
                                     <TextBlock Style="{StaticResource SettingTitleTextStyle}" svc:Localized.Key="Settings.DataBackup.Snapshots.Title" />
                                     <TextBlock Style="{StaticResource SettingDescriptionTextStyle}" TextWrapping="Wrap" svc:Localized.Key="Settings.DataBackup.Snapshots.Description" />
                                 </StackPanel>
+                                </StackPanel>
+                                </Expander>
+                                <Expander IsExpanded="True" Header="WebDAV 备份" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                                <StackPanel Spacing="8" Margin="0,8,0,0" HorizontalAlignment="Stretch">
+                                    <TextBox Header="WebDAV 地址" Tag="WebDav.Url" TextChanged="WebDavSettingTextChanged" PlaceholderText="https://example.com/remote.php/dav/files/user/" />
+                                    <TextBox Header="WebDAV 用户名" Tag="WebDav.Username" TextChanged="WebDavSettingTextChanged" />
+                                    <TextBox Header="远端目录" Tag="WebDav.Directory" Text="DeskBox" TextChanged="WebDavSettingTextChanged" PlaceholderText="例如 backups/deskbox" />
+                                    <PasswordBox Header="WebDAV 密码（仅本次使用，不会保存）" Tag="WebDav.Password" PasswordChanged="WebDavPasswordChanged" />
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Button Click="WebDavTestConnectionButton_Click" Style="{StaticResource ActionButtonStyle}"><TextBlock Text="测试连接" /></Button>
+                                        <Button Click="WebDavUploadButton_Click" Style="{StaticResource ActionButtonStyle}"><TextBlock Text="备份到 WebDAV" /></Button>
+                                        <Button Click="WebDavDownloadButton_Click" Style="{StaticResource ActionButtonStyle}"><TextBlock Text="从 WebDAV 恢复" /></Button>
+                                    </StackPanel>
+                                    <TextBlock Tag="WebDav.Status" Style="{StaticResource SettingDescriptionTextStyle}" TextWrapping="Wrap" />
+                                </StackPanel>
+                                </Expander>
                                 <TextBlock x:Name="BackupSnapshotSummaryText" Style="{StaticResource SettingDescriptionTextStyle}" TextWrapping="Wrap" />
                                 <ListView x:Name="BackupSnapshotsList" SelectionMode="None" IsItemClickEnabled="False">
                                     <ListView.ItemTemplate>

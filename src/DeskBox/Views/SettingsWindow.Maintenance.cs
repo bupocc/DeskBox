@@ -1,8 +1,10 @@
 using DeskBox.Helpers;
+using DeskBox.Models;
 using DeskBox.Services;
 using DeskBox.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.Extensions.DependencyInjection;
 using Windows.Storage.Pickers;
 using WinRT.Interop;
 
@@ -174,6 +176,245 @@ public sealed partial class SettingsWindow
         {
             ExportDataBackupButton.IsEnabled = true;
         }
+    }
+
+    private async void WebDavUploadButton_Click(object sender, RoutedEventArgs e)
+    {
+        await SyncWebDavAsync(upload: true, sender as FrameworkElement);
+    }
+
+    private void WebDavSettingTextChanged(object sender, TextChangedEventArgs e)
+    {
+        SaveWebDavSettingsFromView(sender as FrameworkElement);
+    }
+
+    private void WebDavPasswordChanged(object sender, RoutedEventArgs e)
+    {
+        if (sender is PasswordBox passwordBox && !string.IsNullOrWhiteSpace(passwordBox.Password))
+        {
+            string username = FindDescendant<TextBox>(FindVisualRoot(passwordBox), x => Equals(x.Tag, "WebDav.Username"))?.Text?.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(username)) WebDavBackupService.SavePassword(username, passwordBox.Password);
+        }
+    }
+
+    private void SaveWebDavSettingsFromView(FrameworkElement? source)
+    {
+        DependencyObject? root = FindVisualRoot(source);
+        TextBox? url = FindDescendant<TextBox>(root, x => Equals(x.Tag, "WebDav.Url"));
+        TextBox? user = FindDescendant<TextBox>(root, x => Equals(x.Tag, "WebDav.Username"));
+        TextBox? directory = FindDescendant<TextBox>(root, x => Equals(x.Tag, "WebDav.Directory"));
+        if (url is null || user is null || directory is null) return;
+        AppSettings settings = App.Current.SettingsService.Settings;
+        settings.WebDavBackupUrl = url.Text.Trim();
+        settings.WebDavBackupUsername = user.Text.Trim();
+        settings.WebDavBackupRemoteDirectory = string.IsNullOrWhiteSpace(directory.Text) ? "DeskBox" : directory.Text.Trim();
+        settings.WebDavBackupEnabled = Uri.TryCreate(settings.WebDavBackupUrl, UriKind.Absolute, out Uri? endpoint) &&
+            (endpoint.Scheme is "http" or "https") &&
+            !string.IsNullOrWhiteSpace(settings.WebDavBackupUsername);
+        App.Current.SettingsService.SaveDebounced(notifySubscribers: false);
+    }
+
+    private async void WebDavTestConnectionButton_Click(object sender, RoutedEventArgs e)
+    {
+        DependencyObject? root = FindVisualRoot(sender as FrameworkElement);
+        TextBox? url = FindDescendant<TextBox>(root, x => Equals(x.Tag, "WebDav.Url"));
+        TextBox? user = FindDescendant<TextBox>(root, x => Equals(x.Tag, "WebDav.Username"));
+        TextBox? dir = FindDescendant<TextBox>(root, x => Equals(x.Tag, "WebDav.Directory"));
+        PasswordBox? pwd = FindDescendant<PasswordBox>(root, x => Equals(x.Tag, "WebDav.Password"));
+        TextBlock? status = FindDescendant<TextBlock>(root, x => Equals(x.Tag, "WebDav.Status"));
+        if (!Uri.TryCreate(url?.Text?.Trim(), UriKind.Absolute, out Uri? endpoint)) { if (status is not null) status.Text = "请输入有效的 WebDAV 地址。"; return; }
+        var result = await App.Current.Services.GetRequiredService<WebDavBackupService>().TestConnectionAsync(endpoint, user?.Text?.Trim() ?? "", pwd?.Password ?? "", dir?.Text?.Trim() ?? "DeskBox");
+        AppSettings settings = App.Current.SettingsService.Settings;
+        settings.WebDavBackupEnabled = result.Succeeded && string.IsNullOrEmpty(result.ErrorMessage);
+        settings.WebDavBackupUrl = endpoint.ToString();
+        settings.WebDavBackupUsername = user?.Text?.Trim() ?? string.Empty;
+        settings.WebDavBackupRemoteDirectory = dir?.Text?.Trim() ?? "DeskBox";
+        await App.Current.SettingsService.SaveAsync(notifySubscribers: false);
+        if (status is not null) status.Text = result.Succeeded ? "WebDAV 连接成功。" : $"连接失败：{result.ErrorMessage}";
+    }
+
+    private async void WebDavDownloadButton_Click(object sender, RoutedEventArgs e)
+    {
+        await RestoreWebDavVersionAsync(sender as FrameworkElement);
+    }
+
+    private async Task RestoreWebDavVersionAsync(FrameworkElement? source)
+    {
+        DependencyObject? root = FindVisualRoot(source);
+        TextBox? urlBox = FindDescendant<TextBox>(root, box => Equals(box.Tag, "WebDav.Url"));
+        TextBox? userBox = FindDescendant<TextBox>(root, box => Equals(box.Tag, "WebDav.Username"));
+        TextBox? directoryBox = FindDescendant<TextBox>(root, box => Equals(box.Tag, "WebDav.Directory"));
+        PasswordBox? passwordBox = FindDescendant<PasswordBox>(root, box => Equals(box.Tag, "WebDav.Password"));
+        TextBlock? statusText = FindDescendant<TextBlock>(root, text => Equals(text.Tag, "WebDav.Status"));
+        if (!Uri.TryCreate(urlBox?.Text?.Trim(), UriKind.Absolute, out Uri? endpoint))
+        {
+            if (statusText is not null) statusText.Text = "请输入有效的 WebDAV HTTP(S) 地址。";
+            return;
+        }
+
+        string username = userBox?.Text?.Trim() ?? string.Empty;
+        string password = passwordBox?.Password ?? WebDavBackupService.TryGetPassword(username) ?? string.Empty;
+        string remoteDirectory = directoryBox?.Text?.Trim() ?? "DeskBox";
+        try
+        {
+            IReadOnlyList<WebDavBackupVersion> versions = await App.Current.Services
+                .GetRequiredService<WebDavBackupService>()
+                .ListRemoteVersionsAsync(endpoint, username, password, remoteDirectory);
+            if (versions.Count == 0)
+            {
+                if (statusText is not null) statusText.Text = "远端没有可恢复的备份版本。";
+                return;
+            }
+
+            var choices = versions.Select(version =>
+                $"{version.BackupTimeUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}  ·  版本 {version.VersionId}  ·  {FormatBytes(version.SizeBytes)}")
+                .ToArray();
+            var selector = new ComboBox
+            {
+                ItemsSource = choices,
+                SelectedIndex = 0,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                MinWidth = 0,
+                Width = 500,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch
+            };
+            var content = new StackPanel { Spacing = 8 };
+            content.Children.Add(new TextBlock { Text = "请选择远端备份版本（按时间倒序，最多显示 10 个）：", TextWrapping = TextWrapping.Wrap });
+            content.Children.Add(selector);
+            content.Children.Add(new TextBlock { Text = "恢复前会先创建一份本地恢复前快照。", TextWrapping = TextWrapping.Wrap });
+            var dialog = new ContentDialog
+            {
+                XamlRoot = SettingsRoot.XamlRoot,
+                Title = "从 WebDAV 恢复",
+                Content = content,
+                PrimaryButtonText = "恢复所选版本",
+                CloseButtonText = "取消",
+                DefaultButton = ContentDialogButton.Close
+            };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary || selector.SelectedIndex < 0)
+            {
+                return;
+            }
+
+            WebDavBackupVersion selected = versions[selector.SelectedIndex];
+            string archivePath = Path.Combine(Path.GetTempPath(), $"DeskBox-WebDAV-{selected.VersionId}.zip");
+            await App.Current.Services.GetRequiredService<WebDavBackupService>().DownloadAsync(
+                WebDavBackupService.BuildRemoteArchiveUri(endpoint, remoteDirectory, selected.VersionId),
+                username,
+                password,
+                archivePath);
+            await App.Current.DataBackupService.CreateAutomaticSnapshotNowAsync();
+            await RestoreDataBackupFromPathAsync(archivePath);
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[DataBackup] WebDAV restore failed: {ex}");
+            if (statusText is not null) statusText.Text = $"从 WebDAV 恢复失败：{ex.Message}";
+        }
+    }
+
+    private async Task SyncWebDavAsync(bool upload, FrameworkElement? source)
+    {
+        DependencyObject? visualRoot = FindVisualRoot(source);
+        TextBox? urlBox = FindDescendant<TextBox>(visualRoot, box => Equals(box.Tag, "WebDav.Url"));
+        TextBox? userBox = FindDescendant<TextBox>(visualRoot, box => Equals(box.Tag, "WebDav.Username"));
+        TextBox? directoryBox = FindDescendant<TextBox>(visualRoot, box => Equals(box.Tag, "WebDav.Directory"));
+        PasswordBox? passwordBox = FindDescendant<PasswordBox>(visualRoot, box => Equals(box.Tag, "WebDav.Password"));
+        TextBlock? statusText = FindDescendant<TextBlock>(visualRoot, text => Equals(text.Tag, "WebDav.Status"));
+        if (!Uri.TryCreate(urlBox?.Text?.Trim(), UriKind.Absolute, out Uri? endpoint) ||
+            endpoint.Scheme is not ("http" or "https"))
+        {
+            if (statusText is not null) statusText.Text = "请输入有效的 WebDAV HTTP(S) 地址。";
+            return;
+        }
+
+        string user = userBox?.Text?.Trim() ?? string.Empty;
+        string password = passwordBox?.Password ?? string.Empty;
+        string remoteDirectory = directoryBox?.Text?.Trim() ?? "DeskBox";
+        try
+        {
+            if (!string.IsNullOrEmpty(password)) WebDavBackupService.SavePassword(user, password);
+            App.Current.SettingsService.Settings.WebDavBackupUrl = endpoint.ToString();
+            App.Current.SettingsService.Settings.WebDavBackupUsername = user;
+            App.Current.SettingsService.Settings.WebDavBackupRemoteDirectory = remoteDirectory;
+            App.Current.SettingsService.Settings.WebDavBackupEnabled = true;
+            await App.Current.SettingsService.SaveAsync(notifySubscribers: false);
+            string? archive = null;
+            if (upload)
+            {
+                await App.Current.SettingsService.SaveAsync(notifySubscribers: false);
+                archive = await App.Current.DataBackupService.ExportBackupAsync(Path.GetTempPath());
+            }
+            if (archive is null)
+            {
+                if (statusText is not null) statusText.Text = "没有可上传的本地备份。";
+                return;
+            }
+            WebDavSyncResult result = await App.Current.Services.GetRequiredService<WebDavBackupService>().SyncAsync(
+                endpoint,
+                user,
+                password,
+                archive,
+                remoteDirectory,
+                overwriteConflict: true);
+            if (result.Conflict is { } conflict)
+            {
+                string message = $"本地版本：{conflict.Local.VersionId}（{conflict.Local.BackupTimeUtc.ToLocalTime():g}）\n" +
+                                 $"远程版本：{conflict.Remote.VersionId}（{conflict.Remote.BackupTimeUtc.ToLocalTime():g}）\n\n请选择要保留的版本。";
+                var dialog = new ContentDialog { XamlRoot = SettingsRoot.XamlRoot, Title = "WebDAV 备份冲突", Content = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap }, PrimaryButtonText = "保留本地并覆盖远程", SecondaryButtonText = "恢复远程版本", CloseButtonText = "取消" };
+                ContentDialogResult choice = await dialog.ShowAsync();
+                if (choice == ContentDialogResult.Secondary && conflict.Remote.RemotePath is { } remotePath)
+                {
+                    string destination = Path.Combine(Path.GetTempPath(), $"DeskBox-WebDAV-{conflict.Remote.VersionId}.zip");
+                    await App.Current.Services.GetRequiredService<WebDavBackupService>().DownloadAsync(new Uri(remotePath), user, password, destination);
+                    await RestoreDataBackupFromPathAsync(destination);
+                }
+                else if (choice == ContentDialogResult.Primary)
+                {
+                    await App.Current.Services.GetRequiredService<WebDavBackupService>().SyncAsync(endpoint, user, password, archive, remoteDirectory, overwriteConflict: true, cancellationToken: CancellationToken.None);
+                }
+                return;
+            }
+            if (statusText is not null) statusText.Text = result.Succeeded ? $"已同步版本 {result.UploadedVersion?.VersionId}。" : $"同步失败：{result.ErrorMessage}";
+        }
+        catch (Exception ex)
+        {
+            if (statusText is not null) statusText.Text = $"WebDAV 操作失败：{ex.Message}";
+        }
+        finally { }
+    }
+
+    private static DependencyObject? FindVisualRoot(DependencyObject? child)
+    {
+        DependencyObject? current = child;
+        while (current is not null)
+        {
+            DependencyObject? parent = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(current);
+            if (parent is null) return current;
+            current = parent;
+        }
+        return null;
+    }
+
+    private static T? FindDescendant<T>(DependencyObject? root, Func<T, bool> predicate) where T : DependencyObject
+    {
+        if (root is null) return null;
+        int count = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < count; i++)
+        {
+            DependencyObject child = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(root, i);
+            if (child is T typed && predicate(typed)) return typed;
+            T? nested = FindDescendant(child, predicate);
+            if (nested is not null) return nested;
+        }
+        return null;
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        const long kb = 1024;
+        const long mb = kb * 1024;
+        return bytes >= mb ? $"{bytes / (double)mb:0.##} MB" : bytes >= kb ? $"{bytes / (double)kb:0.##} KB" : $"{bytes} B";
     }
 
     private async void RestoreDataBackupButton_Click(object sender, RoutedEventArgs e)

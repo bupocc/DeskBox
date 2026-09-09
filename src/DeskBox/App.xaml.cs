@@ -2396,7 +2396,27 @@ public partial class App : Application
     {
         try
         {
-            await DataBackupService.CreateAutomaticSnapshotIfDueAsync();
+            string? localSnapshot = await DataBackupService.CreateAutomaticSnapshotIfDueAsync();
+            AppSettings settings = SettingsService.Settings;
+            if (localSnapshot is not null && settings.WebDavBackupEnabled &&
+                Uri.TryCreate(settings.WebDavBackupUrl, UriKind.Absolute, out Uri? endpoint) &&
+                !string.IsNullOrWhiteSpace(settings.WebDavBackupUsername) &&
+                !string.IsNullOrWhiteSpace(settings.WebDavBackupRemoteDirectory))
+            {
+                string? password = WebDavBackupService.TryGetPassword(settings.WebDavBackupUsername);
+                if (!string.IsNullOrEmpty(password))
+                {
+                    WebDavSyncResult result = await Services.GetRequiredService<WebDavBackupService>().SyncAsync(
+                        endpoint,
+                        settings.WebDavBackupUsername,
+                        password,
+                        localSnapshot,
+                        settings.WebDavBackupRemoteDirectory,
+                        overwriteConflict: true);
+                    if (!result.Succeeded && result.Conflict is null)
+                        Log($"[DataBackup] Automatic WebDAV backup failed: {result.ErrorMessage}");
+                }
+            }
         }
         catch (Exception ex)
         {

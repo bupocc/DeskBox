@@ -17,6 +17,7 @@ public static class ServiceRegistry
         services.AddSingleton<SettingsService>();
         services.AddSingleton<SettingsMigrationPipeline>();
         services.AddSingleton<DeskBoxDataBackupService>();
+        services.AddSingleton<WebDavBackupService>();
         services.AddSingleton<DeskBoxAttachmentHealthService>();
         services.AddSingleton<DeskBoxDiagnosticsBundleService>();
         services.AddSingleton<FileService>();
