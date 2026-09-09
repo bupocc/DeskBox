@@ -281,7 +281,7 @@ public sealed partial class WidgetTitleIcon : UserControl
                 WidgetTitleIconKind.Tags => "FilledTagsPath",
                 WidgetTitleIconKind.Search => "FilledSearchPath",
                 WidgetTitleIconKind.SystemMonitor => "FilledSystemMonitorPath",
-                WidgetTitleIconKind.Pomodoro => FilledPomodoroPath,
+                WidgetTitleIconKind.Pomodoro => "FilledPomodoroPath",
                 _ => "FilledDefaultPath"
             }
             : kind switch
@@ -295,7 +295,7 @@ public sealed partial class WidgetTitleIcon : UserControl
                 WidgetTitleIconKind.Tags => "LineTagsPath",
                 WidgetTitleIconKind.Search => "LineSearchPath",
                 WidgetTitleIconKind.SystemMonitor => "LineSystemMonitorPath",
-                WidgetTitleIconKind.Pomodoro => LinePomodoroPath,
+                WidgetTitleIconKind.Pomodoro => "LinePomodoroPath",
                 _ => "LineDefaultPath"
             };
 

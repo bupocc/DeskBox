@@ -127,6 +127,8 @@ public sealed partial class SettingsWindow
         (global::DeskBox.Views.SettingsSections.GlanceWidgetSettingsSection)FindCreatedSectionElement("GlanceSettings", "GlanceSettingsSection")!;
     private global::DeskBox.Views.SettingsSections.SearchSettingsSection SearchSettingsSection =>
         (global::DeskBox.Views.SettingsSections.SearchSettingsSection)FindCreatedSectionElement("SearchSettings", "SearchSettingsSection")!;
+    private global::DeskBox.Views.SettingsSections.PomodoroSettingsSection PomodoroSettingsSection =>
+        (global::DeskBox.Views.SettingsSections.PomodoroSettingsSection)FindCreatedSectionElement("PomodoroSettings", "PomodoroSettingsSection")!;
     private global::Microsoft.UI.Xaml.Controls.StackPanel PerformanceSettingsSection =>
         (global::Microsoft.UI.Xaml.Controls.StackPanel)FindCreatedSectionElement("PerformanceSettings", "PerformanceSettingsSection")!;
     private global::Microsoft.UI.Xaml.Controls.StackPanel MaintenanceSection =>
