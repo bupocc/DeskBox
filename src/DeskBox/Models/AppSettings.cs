@@ -7,6 +7,11 @@ namespace DeskBox.Models;
 /// </summary>
 public class AppSettings
 {
+    /// <summary>是否启用 WebDAV 备份同步。密码不保存在此对象中。</summary>
+    public bool WebDavBackupEnabled { get; set; }
+    public string WebDavBackupUrl { get; set; } = string.Empty;
+    public string WebDavBackupUsername { get; set; } = string.Empty;
+    public string WebDavBackupRemoteDirectory { get; set; } = "DeskBox";
     /// <summary>
     /// Settings schema version for migration purposes.
     /// New or legacy settings without this field begin at version 1 and are

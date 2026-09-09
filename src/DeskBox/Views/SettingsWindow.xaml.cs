@@ -280,6 +280,7 @@ public sealed partial class SettingsWindow : Window
         RefreshVisibleSettingsPageData();
         UpdateResponsiveLayout(GetWindowWidth());
         ApplyToggleSwitchContentVisibility();
+        ApplyWebDavSettingsToView();
         stopwatch.Stop();
         App.Log(
             $"[SettingsPerf] Loaded responsiveTreeMs={responsiveTreeMilliseconds} " +
@@ -287,6 +288,21 @@ public sealed partial class SettingsWindow : Window
             $"remainingMs={stopwatch.ElapsedMilliseconds - featureWidgetMilliseconds} " +
             $"totalMs={stopwatch.ElapsedMilliseconds}");
     }
+
+    private void ApplyWebDavSettingsToView()
+    {
+        AppSettings settings = _settingsService.Settings;
+        TextBox? url = FindDescendant<TextBox>(SettingsRoot, x => Equals(x.Tag, "WebDav.Url"));
+        TextBox? user = FindDescendant<TextBox>(SettingsRoot, x => Equals(x.Tag, "WebDav.Username"));
+        TextBox? directory = FindDescendant<TextBox>(SettingsRoot, x => Equals(x.Tag, "WebDav.Directory"));
+        PasswordBox? password = FindDescendant<PasswordBox>(SettingsRoot, x => Equals(x.Tag, "WebDav.Password"));
+        if (url is not null) url.Text = settings.WebDavBackupUrl;
+        if (user is not null) user.Text = settings.WebDavBackupUsername;
+        if (directory is not null) directory.Text = string.IsNullOrWhiteSpace(settings.WebDavBackupRemoteDirectory) ? "DeskBox" : settings.WebDavBackupRemoteDirectory;
+        if (password is not null && !string.IsNullOrWhiteSpace(settings.WebDavBackupUsername))
+            password.Password = WebDavBackupService.TryGetPassword(settings.WebDavBackupUsername) ?? string.Empty;
+    }
+
 
     private void SettingsWindow_SizeChanged(object sender, WindowSizeChangedEventArgs args)
     {
