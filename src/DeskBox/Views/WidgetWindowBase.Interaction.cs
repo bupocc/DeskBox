@@ -267,6 +267,7 @@ public abstract partial class WidgetWindowBase
     protected void BeginWindowDragCore(PointerRoutedEventArgs e, FrameworkElement captureElement)
     {
         CancelPendingTitleBarDragFrame();
+        _titleBarDragFrameMetrics = new BoundsInteractionFrameMetrics();
         BeginWidgetBoundsInteraction();
         IsDragging = true;
         _deferTitleBarDragConfigUpdates = true;
@@ -326,6 +327,7 @@ public abstract partial class WidgetWindowBase
 
     private void QueueTitleBarDragFrame(int deltaX, int deltaY)
     {
+        _titleBarDragFrameMetrics?.RecordPointerSample();
         _pendingTitleBarDragFrame = new PendingTitleBarDragFrame(
             new RectInt32(
                 InitialWindowPos.X + deltaX,
@@ -335,7 +337,7 @@ public abstract partial class WidgetWindowBase
             deltaX,
             deltaY);
         _titleBarDragFrameRegistration ??=
-            WidgetCompactAnimationCoordinator.Register(ApplyPendingTitleBarDragFrame);
+            WidgetCompactAnimationCoordinator.Register(ApplyPendingTitleBarDragFrame, HWnd, paceToDisplay: true);
     }
 
     private void ApplyPendingTitleBarDragFrame()
@@ -350,6 +352,21 @@ public abstract partial class WidgetWindowBase
         // latest pointer sample for this frame so snap/group work and native
         // window commits never scale with raw mouse-report frequency.
         _pendingTitleBarDragFrame = null;
+        long started = System.Diagnostics.Stopwatch.GetTimestamp();
+        try
+        {
+            ApplyTitleBarDragFrame(frame);
+        }
+        finally
+        {
+            _titleBarDragFrameMetrics?.RecordUpdate(
+                System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds,
+                WidgetCompactAnimationCoordinator.GetFrameBudgetMilliseconds(HWnd));
+        }
+    }
+
+    private void ApplyTitleBarDragFrame(PendingTitleBarDragFrame frame)
+    {
         if (_isCoordinatedMoveDrag)
         {
             App.Current?.WidgetManager?.UpdateCoordinatedMove(
@@ -385,6 +402,7 @@ public abstract partial class WidgetWindowBase
     {
         ApplyPendingTitleBarDragFrame();
         CancelPendingTitleBarDragFrame();
+        CompleteBoundsInteractionFrameMetrics(ref _titleBarDragFrameMetrics, "drag");
     }
 
     private void CancelPendingTitleBarDragFrame()
@@ -424,11 +442,14 @@ public abstract partial class WidgetWindowBase
 
         _isCoordinatedMoveDrag = false;
 
-        CompleteCompactArrangementDrag();
-        RectInt32 finalBounds = GetActualWindowBounds();
-        finalBounds = CompleteExpandedWidgetDrag(finalBounds);
-        CapturePositionAnchor(finalBounds.X, finalBounds.Y, finalBounds.Width, finalBounds.Height);
-        UpdateConfigBoundsFromPhysical(finalBounds.X, finalBounds.Y, finalBounds.Width, finalBounds.Height, persist: true);
+        if (hasMoved)
+        {
+            CompleteCompactArrangementDrag();
+            RectInt32 finalBounds = GetActualWindowBounds();
+            finalBounds = CompleteExpandedWidgetDrag(finalBounds);
+            CapturePositionAnchor(finalBounds.X, finalBounds.Y, finalBounds.Width, finalBounds.Height);
+            UpdateConfigBoundsFromPhysical(finalBounds.X, finalBounds.Y, finalBounds.Width, finalBounds.Height, persist: true);
+        }
         EndWidgetBoundsInteraction();
         OnDragEnd(hasMoved);
         if (hasMoved && !IsCompactBoundsStateActive)
@@ -504,7 +525,15 @@ public abstract partial class WidgetWindowBase
             return;
         }
 
-        Win32Helper.GetCursorPos(out var currentPt);
+        if (Win32Helper.GetCursorPos(out var currentPt))
+        {
+            QueueInteractiveResizePointer(new PointInt32(currentPt.X, currentPt.Y));
+        }
+        e.Handled = true;
+    }
+
+    private RectInt32 ResolveInteractiveResizeBounds(PointInt32 currentPt)
+    {
         int deltaX = currentPt.X - InitialCursorPt.X;
         int deltaY = currentPt.Y - InitialCursorPt.Y;
 
@@ -533,9 +562,7 @@ public abstract partial class WidgetWindowBase
                 ResizeDirection,
                 limits.MinWidth,
                 limits.MaxWidth);
-            QueueInteractiveResizeBounds(compactSnapped);
-            e.Handled = true;
-            return;
+            return compactSnapped;
         }
 
         SizeInt32 minSize = _interactiveResizeMinimumSize;
@@ -564,9 +591,7 @@ public abstract partial class WidgetWindowBase
 
         var proposed = new RectInt32(newX, newY, newWidth, newHeight);
         var snapped = App.Current.ResizeGuideOverlay.UpdateGuidesAndSnap(proposed, ResizeDirection);
-        snapped = AnchorExpandedResizeBounds(snapped);
-        QueueInteractiveResizeBounds(snapped);
-        e.Handled = true;
+        return AnchorExpandedResizeBounds(snapped);
     }
 
     private void CommitInteractiveResizeBounds()
@@ -691,11 +716,14 @@ public abstract partial class WidgetWindowBase
         }
 
         _isCoordinatedMoveDrag = false;
-        CompleteCompactArrangementDrag();
-        RectInt32 finalBounds = GetActualWindowBounds();
-        finalBounds = CompleteExpandedWidgetDrag(finalBounds);
-        CapturePositionAnchor(finalBounds.X, finalBounds.Y, finalBounds.Width, finalBounds.Height);
-        UpdateConfigBoundsFromPhysical(finalBounds.X, finalBounds.Y, finalBounds.Width, finalBounds.Height, persist: true);
+        if (hasMoved)
+        {
+            CompleteCompactArrangementDrag();
+            RectInt32 finalBounds = GetActualWindowBounds();
+            finalBounds = CompleteExpandedWidgetDrag(finalBounds);
+            CapturePositionAnchor(finalBounds.X, finalBounds.Y, finalBounds.Width, finalBounds.Height);
+            UpdateConfigBoundsFromPhysical(finalBounds.X, finalBounds.Y, finalBounds.Width, finalBounds.Height, persist: true);
+        }
         EndWidgetBoundsInteraction();
         OnDragEnd(hasMoved);
         if (hasMoved && !IsCompactBoundsStateActive)

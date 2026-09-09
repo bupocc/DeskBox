@@ -82,7 +82,11 @@ public sealed class PerformanceSettingsContractTests
             window,
             StringComparison.Ordinal);
         Assert.Contains(
-            "[\"PerformanceSettings\"] = PerformanceSettingsSection",
+            "x:Key=\"PerformanceSettingsSectionTemplate\"",
+            xaml,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "EnsureSettingsSectionCreated(visibleSectionTag)",
             navigation,
             StringComparison.Ordinal);
     }

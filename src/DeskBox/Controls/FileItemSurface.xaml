@@ -4,6 +4,7 @@
     x:Name="SurfaceRoot"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:DeskBox.Controls"
     Foreground="{ThemeResource TextFillColorPrimaryBrush}"
     HorizontalAlignment="Stretch"
     VerticalAlignment="Stretch">
@@ -29,11 +30,137 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <DataTemplate x:Key="IconItemLayoutTemplate" x:DataType="controls:FileItemSurface">
+            <StackPanel
+                x:Name="IconItemStack"
+                HorizontalAlignment="Center"
+                Spacing="{x:Bind LayoutContext.IconContentSpacing, Mode=OneWay}"
+                Visibility="{x:Bind IconLayoutVisibility, Mode=OneWay}">
+                <Grid HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <Image
+                        Width="{x:Bind LayoutContext.IconImageSize, Mode=OneWay}"
+                        Height="{x:Bind LayoutContext.IconImageSize, Mode=OneWay}"
+                        Source="{Binding Icon}"
+                        Stretch="Uniform"
+                        Visibility="{Binding IconVisibility}" />
+                    <ContentControl
+                        Style="{StaticResource FileIconLoadingPlaceholderStyle}"
+                        Width="{x:Bind LayoutContext.IconImageSize, Mode=OneWay}"
+                        Height="{x:Bind LayoutContext.IconImageSize, Mode=OneWay}"
+                        Visibility="{Binding FallbackIconVisibility}" />
+                    <Border
+                        Width="20"
+                        Height="20"
+                        Margin="0,1,1,0"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Top"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="10"
+                        IsHitTestVisible="False"
+                        Visibility="{x:Bind ActivityBadgeVisibility, Mode=OneWay}">
+                        <ProgressRing
+                            Width="13"
+                            Height="13"
+                            IsActive="{x:Bind IsActivityActive, Mode=OneWay}"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center" />
+                    </Border>
+                </Grid>
+                <TextBlock
+                    x:Name="IconItemNameText"
+                    MaxWidth="{x:Bind LayoutContext.IconLabelMaxWidth, Mode=OneWay}"
+                    Margin="2,0"
+                    HorizontalAlignment="Center"
+                    FontSize="{x:Bind LayoutContext.IconLabelFontSize, Mode=OneWay}"
+                    MaxLines="{x:Bind LayoutContext.IconLabelMaxLines, Mode=OneWay}"
+                    Text="{Binding Name}"
+                    TextAlignment="Center"
+                    TextTrimming="CharacterEllipsis"
+                    TextWrapping="Wrap"
+                    Visibility="{x:Bind LayoutContext.IconLabelVisibility, Mode=OneWay}" />
+            </StackPanel>
+        </DataTemplate>
+
+        <DataTemplate x:Key="ListItemLayoutTemplate" x:DataType="controls:FileItemSurface">
+            <Grid
+                x:Name="ListLayoutGrid"
+                HorizontalAlignment="Left"
+                ColumnSpacing="10"
+                Visibility="{x:Bind ListLayoutVisibility, Mode=OneWay}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Grid Width="{x:Bind LayoutContext.ListIconSize, Mode=OneWay}">
+                    <Image
+                        Width="{x:Bind LayoutContext.ListIconSize, Mode=OneWay}"
+                        Height="{x:Bind LayoutContext.ListIconSize, Mode=OneWay}"
+                        Source="{Binding Icon}"
+                        Stretch="Uniform"
+                        Visibility="{Binding IconVisibility}" />
+                    <ContentControl
+                        x:Name="IconLoadingPlaceholder"
+                        Style="{StaticResource FileIconLoadingPlaceholderStyle}"
+                        Width="{x:Bind LayoutContext.ListIconSize, Mode=OneWay}"
+                        Height="{x:Bind LayoutContext.ListIconSize, Mode=OneWay}"
+                        Visibility="{Binding FallbackIconVisibility}" />
+                    <Border
+                        Width="18"
+                        Height="18"
+                        Margin="0,1,1,0"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Top"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="9"
+                        IsHitTestVisible="False"
+                        Visibility="{x:Bind ActivityBadgeVisibility, Mode=OneWay}">
+                        <ProgressRing
+                            Width="12"
+                            Height="12"
+                            IsActive="{x:Bind IsActivityActive, Mode=OneWay}"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center" />
+                    </Border>
+                </Grid>
+                <StackPanel
+                    x:Name="ListItemTextHost"
+                    Grid.Column="1"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Center"
+                    MaxWidth="{x:Bind ListItemTextMaxWidth, Mode=OneWay}"
+                    Spacing="1">
+                    <TextBlock
+                        x:Name="ListItemNameText"
+                        FontSize="{x:Bind LayoutContext.ListLabelFontSize, Mode=OneWay}"
+                        HorizontalAlignment="Left"
+                        MaxWidth="{x:Bind ListItemTextMaxWidth, Mode=OneWay}"
+                        Text="{Binding Name}"
+                        TextTrimming="CharacterEllipsis"
+                        TextWrapping="NoWrap" />
+                    <TextBlock
+                        x:Name="ListItemDetailText"
+                        FontSize="{x:Bind LayoutContext.ListItemDetailFontSize, Mode=OneWay}"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        HorizontalAlignment="Left"
+                        MaxWidth="{x:Bind ListItemTextMaxWidth, Mode=OneWay}"
+                        Text="{Binding SecondaryInfo}"
+                        Visibility="{x:Bind LayoutContext.ListItemDetailVisibility, Mode=OneWay}"
+                        TextTrimming="CharacterEllipsis"
+                        TextWrapping="NoWrap" />
+                </StackPanel>
+            </Grid>
+        </DataTemplate>
     </UserControl.Resources>
 
     <Border
         x:Name="SurfaceBorder"
         Tag="InteractiveSurface"
+        Background="Transparent"
         HorizontalAlignment="{Binding SurfaceHorizontalAlignment, ElementName=SurfaceRoot}"
         MaxWidth="{Binding SurfaceMaxWidth, ElementName=SurfaceRoot}"
         Margin="{Binding SurfaceMargin, ElementName=SurfaceRoot}"
@@ -56,132 +183,15 @@
                         Text="{x:Bind ActivityStatusText, Mode=OneWay}"
                         Visibility="{x:Bind ActivityStatusVisibility, Mode=OneWay}" />
                     <TextBlock
+                        MaxWidth="360"
+                        MaxLines="2"
                         Text="{Binding FullPath}"
+                        TextTrimming="CharacterEllipsis"
+                        TextWrapping="Wrap"
                         Visibility="{x:Bind PathTooltipVisibility, Mode=OneWay}" />
                 </StackPanel>
             </ToolTip>
         </ToolTipService.ToolTip>
-        <Grid>
-        <StackPanel
-            x:Name="IconItemStack"
-            HorizontalAlignment="Center"
-            Spacing="{Binding LayoutContext.IconContentSpacing, ElementName=SurfaceRoot}"
-            Visibility="{Binding IconLayoutVisibility, ElementName=SurfaceRoot}">
-            <Grid HorizontalAlignment="Center" VerticalAlignment="Center">
-                <Image
-                    Width="{Binding LayoutContext.IconImageSize, ElementName=SurfaceRoot}"
-                    Height="{Binding LayoutContext.IconImageSize, ElementName=SurfaceRoot}"
-                    Source="{Binding Icon}"
-                    Stretch="Uniform"
-                    Visibility="{Binding IconVisibility}" />
-                <ContentControl
-                    Style="{StaticResource FileIconLoadingPlaceholderStyle}"
-                    Width="{Binding LayoutContext.IconImageSize, ElementName=SurfaceRoot}"
-                    Height="{Binding LayoutContext.IconImageSize, ElementName=SurfaceRoot}"
-                    Visibility="{Binding FallbackIconVisibility}" />
-                <Border
-                    Width="20"
-                    Height="20"
-                    Margin="0,1,1,0"
-                    HorizontalAlignment="Right"
-                    VerticalAlignment="Top"
-                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                    BorderThickness="1"
-                    CornerRadius="10"
-                    IsHitTestVisible="False"
-                    Visibility="{Binding ActivityBadgeVisibility, ElementName=SurfaceRoot}">
-                    <ProgressRing
-                        Width="13"
-                        Height="13"
-                        IsActive="{Binding IsActivityActive, ElementName=SurfaceRoot}"
-                        HorizontalAlignment="Center"
-                        VerticalAlignment="Center" />
-                </Border>
-            </Grid>
-            <TextBlock
-                x:Name="IconItemNameText"
-                MaxWidth="{Binding LayoutContext.IconLabelMaxWidth, ElementName=SurfaceRoot}"
-                Margin="2,0"
-                HorizontalAlignment="Center"
-                FontSize="{Binding LayoutContext.IconLabelFontSize, ElementName=SurfaceRoot}"
-                MaxLines="{Binding LayoutContext.IconLabelMaxLines, ElementName=SurfaceRoot}"
-                Text="{Binding Name}"
-                TextAlignment="Center"
-                TextTrimming="CharacterEllipsis"
-                TextWrapping="Wrap"
-                Visibility="{Binding LayoutContext.IconLabelVisibility, ElementName=SurfaceRoot}" />
-        </StackPanel>
-
-        <Grid
-            x:Name="ListLayoutGrid"
-            HorizontalAlignment="Left"
-            ColumnSpacing="10"
-            Visibility="{Binding ListLayoutVisibility, ElementName=SurfaceRoot}">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
-            <Grid Width="{Binding LayoutContext.ListIconSize, ElementName=SurfaceRoot}">
-                <Image
-                    Width="{Binding LayoutContext.ListIconSize, ElementName=SurfaceRoot}"
-                    Height="{Binding LayoutContext.ListIconSize, ElementName=SurfaceRoot}"
-                    Source="{Binding Icon}"
-                    Stretch="Uniform"
-                    Visibility="{Binding IconVisibility}" />
-                <ContentControl
-                    x:Name="IconLoadingPlaceholder"
-                    Style="{StaticResource FileIconLoadingPlaceholderStyle}"
-                    Width="{Binding LayoutContext.ListIconSize, ElementName=SurfaceRoot}"
-                    Height="{Binding LayoutContext.ListIconSize, ElementName=SurfaceRoot}"
-                    Visibility="{Binding FallbackIconVisibility}" />
-                <Border
-                    Width="18"
-                    Height="18"
-                    Margin="0,1,1,0"
-                    HorizontalAlignment="Right"
-                    VerticalAlignment="Top"
-                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                    BorderThickness="1"
-                    CornerRadius="9"
-                    IsHitTestVisible="False"
-                    Visibility="{Binding ActivityBadgeVisibility, ElementName=SurfaceRoot}">
-                    <ProgressRing
-                        Width="12"
-                        Height="12"
-                        IsActive="{Binding IsActivityActive, ElementName=SurfaceRoot}"
-                        HorizontalAlignment="Center"
-                        VerticalAlignment="Center" />
-                </Border>
-            </Grid>
-            <StackPanel
-                x:Name="ListItemTextHost"
-                Grid.Column="1"
-                HorizontalAlignment="Left"
-                VerticalAlignment="Center"
-                MaxWidth="{Binding ListItemTextMaxWidth, ElementName=SurfaceRoot}"
-                Spacing="1">
-                <TextBlock
-                    x:Name="ListItemNameText"
-                    FontSize="{Binding LayoutContext.ListLabelFontSize, ElementName=SurfaceRoot}"
-                    HorizontalAlignment="Left"
-                    MaxWidth="{Binding ListItemTextMaxWidth, ElementName=SurfaceRoot}"
-                    Text="{Binding Name}"
-                    TextTrimming="CharacterEllipsis"
-                    TextWrapping="NoWrap" />
-                <TextBlock
-                    x:Name="ListItemDetailText"
-                    FontSize="{Binding LayoutContext.ListItemDetailFontSize, ElementName=SurfaceRoot}"
-                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                    HorizontalAlignment="Left"
-                    MaxWidth="{Binding ListItemTextMaxWidth, ElementName=SurfaceRoot}"
-                    Text="{Binding SecondaryInfo}"
-                    Visibility="{Binding LayoutContext.ListItemDetailVisibility, ElementName=SurfaceRoot}"
-                    TextTrimming="CharacterEllipsis"
-                    TextWrapping="NoWrap" />
-            </StackPanel>
-        </Grid>
-        </Grid>
+        <Grid x:Name="LayoutHost" />
     </Border>
 </UserControl>

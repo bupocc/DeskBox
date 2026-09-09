@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.22621.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19044.0</SupportedOSPlatformVersion>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>false</WindowsAppSDKSelfContained>
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <Platforms>x64;ARM64</Platforms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsAotCompatible>true</IsAotCompatible>
+    <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
+    <AssemblyName>DeskBox.Glance.NativePackage</AssemblyName>
+    <WindowsAppSdkBootstrapInitialize>false</WindowsAppSdkBootstrapInitialize>
+    <WindowsAppSDKDeploymentManagerInitialize>false</WindowsAppSDKDeploymentManagerInitialize>
+    <WindowsAppSDKUndockedRegFreeWinRTInitialize>false</WindowsAppSDKUndockedRegFreeWinRTInitialize>
+    <GlancePackageVersion Condition="'$(GlancePackageVersion)' == ''">1</GlancePackageVersion>
+    <DefineConstants Condition="'$(GlancePackageVersion)' == '2'">$(DefineConstants);GLANCE_VERSION_TWO</DefineConstants>
+    <GlanceLayoutSource Condition="'$(GlanceLayoutSource)' == ''">$(MSBuildThisFileDirectory)..\..\..\src\DeskBox\Services\GlanceCalendarLayoutCalculator.cs</GlanceLayoutSource>
+    <!-- Production sources linked verbatim: the real-Glance slice must run the
+         same business code the host ships, not a re-implementation. -->
+    <DeskBoxSourceRoot>$(MSBuildThisFileDirectory)..\..\..\src\DeskBox\</DeskBoxSourceRoot>
+    <AbstractionsRoot>$(MSBuildThisFileDirectory)..\..\..\src\DeskBox.Abstractions\</AbstractionsRoot>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.4.0" />
+    <Compile Include="$(GlanceLayoutSource)" Link="GlanceCalendarLayoutCalculator.cs" />
+    <Compile Include="$(AbstractionsRoot)Models\GlanceCalendarModels.cs" Link="Production\GlanceCalendarModels.cs" />
+    <Compile Include="$(AbstractionsRoot)Contracts\ICalendarPresentationSource.cs" Link="Production\ICalendarPresentationSource.cs" />
+    <Compile Include="$(DeskBoxSourceRoot)Services\LocalCalendarPresentationSource.cs" Link="Production\LocalCalendarPresentationSource.cs" />
+    <Compile Include="$(DeskBoxSourceRoot)Services\GlanceTraditionalCalendarService.cs" Link="Production\GlanceTraditionalCalendarService.cs" />
+    <Compile Include="$(DeskBoxSourceRoot)Services\GlanceFestivalService.cs" Link="Production\GlanceFestivalService.cs" />
+    <Compile Include="$(DeskBoxSourceRoot)Models\GlanceWidgetData.cs" Link="Production\GlanceWidgetData.cs" />
+    <Compile Include="$(DeskBoxSourceRoot)Helpers\ChineseTextConverter.cs" Link="Production\ChineseTextConverter.cs" />
+    <Page Remove="calendar.xaml" />
+    <None Update="calendar.xaml" CopyToOutputDirectory="PreserveNewest" />
+    <Page Remove="glance-real.xaml" />
+    <None Update="glance-real.xaml" CopyToOutputDirectory="PreserveNewest" />
+    <Page Remove="full-glance.xaml" />
+    <None Update="full-glance.xaml" CopyToOutputDirectory="PreserveNewest" />
+    <!-- RealGlanceControl.xaml stays a compiled Page (XBF + XamlMetaDataProvider). -->
+    <PRIResource Include="Strings\zh-CN\Resources.resw" />
+    <PRIResource Include="Strings\en-US\Resources.resw" />
+  </ItemGroup>
+</Project>

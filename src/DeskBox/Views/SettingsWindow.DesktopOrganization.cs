@@ -4,7 +4,7 @@ public sealed partial class SettingsWindow
 {
     public void RefreshDesktopOrganizationState()
     {
-        DesktopOrganizationSettingsSection.Refresh();
+        DesktopOrganizationSettingsSection?.Refresh();
         ViewModel.RefreshManagedStorageState();
     }
 }

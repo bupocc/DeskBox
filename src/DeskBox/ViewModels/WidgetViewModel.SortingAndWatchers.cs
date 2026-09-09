@@ -510,6 +510,16 @@ public partial class WidgetViewModel
             return false;
         }
 
+        // A file can leave and return to the same managed path without its
+        // timestamp changing. Drop every source-scoped icon variant on a real
+        // watcher event so an earlier generic/failed shortcut icon cannot be
+        // reused after the item is reintroduced.
+        _fileService.ClearIconCache(
+            path,
+            _hideShortcutArrowOverlay,
+            _showImageFilesAsIcons,
+            resetTransientFailures: true);
+
         int existingIndex = FindItemIndexByPath(path);
         if (Config.SortMode == WidgetSortMode.Manual && existingIndex >= 0)
         {
@@ -574,6 +584,11 @@ public partial class WidgetViewModel
             return;
         }
 
+        _fileService.ClearIconCache(
+            path,
+            _hideShortcutArrowOverlay,
+            _showImageFilesAsIcons,
+            resetTransientFailures: true);
         Items.RemoveAt(index);
         RemoveFileAddedAt(path);
         NormalizeSortOrder();

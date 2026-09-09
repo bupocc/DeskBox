@@ -249,7 +249,10 @@ public sealed partial class WidgetManager
 
         foreach (var widgetPlan in affectedWidgets)
         {
-            EnsureFileWidgetPathAvailable(widgetPlan.DestinationFolder, widgetPlan.Widget.Id);
+            EnsureFileWidgetPathAvailable(
+                widgetPlan.DestinationFolder,
+                widgetPlan.Widget.Id,
+                candidateFollowsDefaultStoragePath: true);
             if (FileService.IsPathUnderDirectoryResolved(widgetPlan.DestinationFolder, widgetPlan.SourceFolder))
             {
                 throw new InvalidOperationException(_localizationService.Format(

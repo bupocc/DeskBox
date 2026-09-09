@@ -21,6 +21,7 @@ mod windows_proxy {
                 BI_RGB, BITMAP, BITMAPINFO, DIB_RGB_COLORS, DeleteObject, GetDC, GetDIBits,
                 GetObjectW, HBITMAP, HGDIOBJ, ReleaseDC,
             },
+            Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES,
             System::{
                 Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize},
                 LibraryLoader::GetModuleHandleW,
@@ -30,14 +31,16 @@ mod windows_proxy {
                     CMF_EXPLORE, CMF_ITEMMENU, CMF_NORMAL, CMINVOKECOMMANDINFO, Common::ITEMIDLIST,
                     IContextMenu, IContextMenu2, IContextMenu3, IShellFolder,
                     IShellItemImageFactory, SHBindToParent, SHCreateItemFromParsingName,
+                    SHFILEINFOW, SHGFI_ADDOVERLAYS, SHGFI_ICON, SHGFI_LARGEICON, SHGetFileInfoW,
                     SHParseDisplayName, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY, SIIGBF_SCALEUP,
                     SIIGBF_THUMBNAILONLY,
                 },
                 WindowsAndMessaging::{
-                    CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
-                    PostMessageW, RegisterClassW, SW_SHOWNORMAL, SetForegroundWindow, TPM_NONOTIFY,
-                    TPM_RETURNCMD, TrackPopupMenuEx, WINDOW_EX_STYLE, WINDOW_STYLE, WM_DRAWITEM,
-                    WM_INITMENUPOPUP, WM_MEASUREITEM, WM_MENUCHAR, WM_NULL, WNDCLASSW,
+                    CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyIcon, DestroyMenu,
+                    DestroyWindow, GetIconInfo, HICON, ICONINFO, PostMessageW, RegisterClassW,
+                    SW_SHOWNORMAL, SetForegroundWindow, TPM_NONOTIFY, TPM_RETURNCMD,
+                    TrackPopupMenuEx, WINDOW_EX_STYLE, WINDOW_STYLE, WM_DRAWITEM, WM_INITMENUPOPUP,
+                    WM_MEASUREITEM, WM_MENUCHAR, WM_NULL, WNDCLASSW,
                 },
             },
         },
@@ -70,6 +73,7 @@ mod windows_proxy {
     enum ExtractionMode {
         Thumbnail,
         Icon,
+        IconWithOverlays,
     }
 
     enum ProxyRequest {
@@ -177,6 +181,34 @@ mod windows_proxy {
         }
     }
 
+    struct IconGuard(HICON);
+
+    impl Drop for IconGuard {
+        fn drop(&mut self) {
+            // SAFETY: SHGetFileInfoW returns an owned HICON when SHGFI_ICON is
+            // requested. The handle is released after its bitmap was copied.
+            unsafe {
+                let _ = DestroyIcon(self.0);
+            }
+        }
+    }
+
+    struct IconInfoBitmapGuard(ICONINFO);
+
+    impl Drop for IconInfoBitmapGuard {
+        fn drop(&mut self) {
+            // SAFETY: GetIconInfo creates both bitmap handles for the caller.
+            unsafe {
+                if !self.0.hbmColor.is_invalid() {
+                    let _ = DeleteObject(HGDIOBJ(self.0.hbmColor.0));
+                }
+                if !self.0.hbmMask.is_invalid() {
+                    let _ = DeleteObject(HGDIOBJ(self.0.hbmMask.0));
+                }
+            }
+        }
+    }
+
     pub fn run() -> Result<i32, String> {
         match parse_request()? {
             ProxyRequest::SelfTest => {
@@ -237,13 +269,20 @@ mod windows_proxy {
             });
         }
 
-        let mode = if first == "--icon-only" {
-            first = arguments
-                .next()
-                .ok_or_else(|| "missing icon path argument".to_string())?;
-            ExtractionMode::Icon
-        } else {
-            ExtractionMode::Thumbnail
+        let mode = match first.to_string_lossy().as_ref() {
+            "--icon-only" => {
+                first = arguments
+                    .next()
+                    .ok_or_else(|| "missing icon path argument".to_string())?;
+                ExtractionMode::Icon
+            }
+            "--icon-with-overlays" => {
+                first = arguments
+                    .next()
+                    .ok_or_else(|| "missing icon path argument".to_string())?;
+                ExtractionMode::IconWithOverlays
+            }
+            _ => ExtractionMode::Thumbnail,
         };
 
         let size = arguments
@@ -271,8 +310,11 @@ mod windows_proxy {
     }
 
     fn extract_shell_image(path: &Path, size: i32, mode: ExtractionMode) -> Result<(), String> {
-        if !path.is_file() {
-            return Err("Shell image source is not a file".to_string());
+        // IShellItemImageFactory supports both files and folders. Reject only
+        // missing paths so directory icons (including desktop.ini overrides)
+        // use the same high-resolution path as associated file-type icons.
+        if !path.exists() {
+            return Err("Shell image source does not exist".to_string());
         }
 
         let _com_guard = initialize_com()?;
@@ -282,6 +324,12 @@ mod windows_proxy {
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
+        if matches!(mode, ExtractionMode::IconWithOverlays)
+            && let Ok(bytes) = load_shell_icon_with_overlays(&parsing_name)
+        {
+            return write_stdout(&bytes);
+        }
+
         // SAFETY: The parsing name remains alive for the call and the generic
         // return type supplies the exact requested COM interface IID.
         let factory: IShellItemImageFactory =
@@ -300,6 +348,10 @@ mod windows_proxy {
             // a 256 px transparent canvas, which renders as a tiny shortcut
             // icon in the fixed file tile.
             ExtractionMode::Icon => SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK,
+            // SHGetFileInfoW above is the API that supports Shell overlays. If
+            // it cannot supply an icon, keep the item visible by falling back
+            // to the high-resolution base icon from IShellItemImageFactory.
+            ExtractionMode::IconWithOverlays => SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK,
         };
         // SAFETY: The returned bitmap is owned by the caller and released by
         // BitmapGuard after its pixels have been copied.
@@ -308,6 +360,40 @@ mod windows_proxy {
         let bitmap_guard = BitmapGuard(bitmap);
         let bytes = bitmap_to_bmp_bytes(bitmap_guard.0)?;
         write_stdout(&bytes)
+    }
+
+    fn load_shell_icon_with_overlays(parsing_name: &[u16]) -> Result<Vec<u8>, String> {
+        let mut file_info = SHFILEINFOW::default();
+        // SAFETY: parsing_name is zero terminated and file_info is valid for
+        // the duration of the call. SHGFI_ICON transfers ownership of hIcon.
+        let image_list = unsafe {
+            SHGetFileInfoW(
+                PCWSTR(parsing_name.as_ptr()),
+                FILE_FLAGS_AND_ATTRIBUTES(0),
+                Some(&mut file_info),
+                size_of::<SHFILEINFOW>() as u32,
+                SHGFI_ICON | SHGFI_LARGEICON | SHGFI_ADDOVERLAYS,
+            )
+        };
+        if image_list == 0 || file_info.hIcon.is_invalid() {
+            return Err("Shell overlay icon extraction failed".to_string());
+        }
+
+        let icon = IconGuard(file_info.hIcon);
+        icon_to_bmp_bytes(icon.0)
+    }
+
+    fn icon_to_bmp_bytes(icon: HICON) -> Result<Vec<u8>, String> {
+        let mut icon_info = ICONINFO::default();
+        // SAFETY: icon is valid and the output structure is initialized.
+        unsafe { GetIconInfo(icon, &mut icon_info) }
+            .map_err(|error| format!("unable to read Shell overlay icon: {error}"))?;
+        let bitmaps = IconInfoBitmapGuard(icon_info);
+        if bitmaps.0.hbmColor.is_invalid() {
+            return Err("Shell overlay icon has no color bitmap".to_string());
+        }
+
+        bitmap_to_bmp_bytes(bitmaps.0.hbmColor)
     }
 
     fn initialize_com() -> Result<ComGuard, String> {
@@ -704,6 +790,25 @@ mod windows_proxy {
             };
 
             assert!(error.contains("missing context menu y coordinate"));
+        }
+
+        #[test]
+        fn icon_with_overlays_request_has_a_distinct_extraction_mode() {
+            let request = parse_request_from(
+                ["--icon-with-overlays", r"C:\Desk Box\Steam.url", "256"]
+                    .into_iter()
+                    .map(OsString::from),
+            )
+            .expect("overlay icon request");
+
+            match request {
+                ProxyRequest::Extract { path, size, mode } => {
+                    assert_eq!(path, PathBuf::from(r"C:\Desk Box\Steam.url"));
+                    assert_eq!(size, 256);
+                    assert!(matches!(mode, ExtractionMode::IconWithOverlays));
+                }
+                _ => panic!("unexpected proxy request"),
+            }
         }
 
         #[test]

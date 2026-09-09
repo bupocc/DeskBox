@@ -74,26 +74,30 @@ public sealed class AotStage4E4ContractTests
             "src/DeskBox/Views/SettingsSections/FileWidgetSettingsSection.xaml");
 
         Assert.DoesNotContain("{Binding ", xaml, StringComparison.Ordinal);
-        Assert.Equal(4, CountOccurrences(xaml, "{x:Bind ViewModel."));
+        Assert.Equal(5, CountOccurrences(xaml, "{x:Bind ViewModel."));
     }
 
     [Fact]
     public void SettingsWindow_AssignsAndClearsTheTypedBridgeAroundViewModelLifetime()
     {
         string code = ReadRepositoryFile("src/DeskBox/Views/SettingsWindow.xaml.cs");
+        string factory = ReadRepositoryFile("src/DeskBox/Views/SettingsWindow.DeferredSections.cs");
 
-        int rootAssignment = code.IndexOf(
-            "SettingsRoot.DataContext = ViewModel;",
+        int rootCreation = factory.IndexOf("template.LoadContent()", StringComparison.Ordinal);
+        int rootAssignment = factory.IndexOf(
+            "section.DataContext = ViewModel;",
             StringComparison.Ordinal);
-        int bridgeAssignment = code.IndexOf(
-            "AppearanceDetailSection.ViewModel = ViewModel;",
+        int bridgeAssignment = factory.IndexOf(
+            "fileSettings.ViewModel = ViewModel;",
             StringComparison.Ordinal);
+        int rootAttachment = factory.IndexOf("ContentHost.Children.Add(section);", StringComparison.Ordinal);
         int bridgeClear = code.IndexOf(
             "AppearanceDetailSection.ViewModel = null;",
             StringComparison.Ordinal);
         int viewModelDispose = code.IndexOf("ViewModel.Dispose();", StringComparison.Ordinal);
 
-        Assert.True(rootAssignment >= 0 && bridgeAssignment > rootAssignment);
+        Assert.True(rootCreation >= 0 && rootAssignment > rootCreation);
+        Assert.True(bridgeAssignment > rootAssignment && bridgeAssignment < rootAttachment);
         Assert.True(bridgeClear >= 0 && bridgeClear < viewModelDispose);
     }
 
@@ -145,7 +149,7 @@ public sealed class AotStage4E4ContractTests
     {
         string audit = ReadRepositoryFile("scripts/publish-aot-audit.ps1");
 
-        Assert.Contains("$auditProfileVersion = 58", audit, StringComparison.Ordinal);
+        Assert.Contains("$auditProfileVersion = 62", audit, StringComparison.Ordinal);
         Assert.Contains("schemaVersion = 55", audit, StringComparison.Ordinal);
         Assert.Contains("stage4E4SourceFiles", audit, StringComparison.Ordinal);
         Assert.Contains("stage4E4LegacyBindingSourceMatches", audit, StringComparison.Ordinal);
@@ -162,7 +166,7 @@ public sealed class AotStage4E4ContractTests
         string audit = ReadRepositoryFile("scripts/publish-aot-audit.ps1");
         string project = ReadRepositoryFile("src/DeskBox/DeskBox.csproj");
 
-        Assert.Contains("$stage4E4MaximumWmc1510Count = 1235", audit, StringComparison.Ordinal);
+        Assert.Contains("$stage4E4MaximumWmc1510Count = 870", audit, StringComparison.Ordinal);
         Assert.Contains("Stage 4E-4 WMC1510 count regressed above its ceiling", audit, StringComparison.Ordinal);
         Assert.Contains("Native AOT stage 5B-4C3B2B1", project, StringComparison.Ordinal);
         Assert.Contains("four typed ViewModel bridge bindings", project, StringComparison.OrdinalIgnoreCase);

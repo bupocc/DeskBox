@@ -5,6 +5,7 @@ using DeskBox.Models;
 using DeskBox.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 
 namespace DeskBox.Controls.WidgetContents;
 
@@ -30,6 +31,7 @@ public sealed partial class FileSurfaceContent
         }
 
         long generation = _openStateGeneration;
+        long stackPopoverGeneration = _stackPopoverShowGeneration;
         string kind = GetOpenItemKind(item);
         Stopwatch stopwatch = Stopwatch.StartNew();
         using IDisposable timing = PerformanceLogger.Measure(
@@ -82,6 +84,7 @@ public sealed partial class FileSurfaceContent
             }
             else if (result == FileService.OpenItemResult.OpenedOrHandled)
             {
+                ClearOpenedItemSelection(item, stackPopoverGeneration);
                 // This confirms that Windows accepted the dispatch. It does
                 // not claim that the target application's cold start has
                 // finished, which Shell does not expose reliably for all
@@ -121,6 +124,47 @@ public sealed partial class FileSurfaceContent
             EndOpenItem(requestPath, dispatched);
             SetOpeningVisual(item, isOpening: false);
         }
+    }
+
+    private void ClearOpenedItemSelection(
+        WidgetItem item,
+        long stackPopoverGeneration)
+    {
+        // Only deselect the dispatched item: another file may have been
+        // selected while Shell was busy. Do not clear a newly opened popover.
+        ItemsGrid.SelectedItems.Remove(item);
+        ItemsList.SelectedItems.Remove(item);
+        ClearOpenedItemPointerFeedback(ItemsGrid, item);
+        ClearOpenedItemPointerFeedback(ItemsList, item);
+        if (stackPopoverGeneration == _stackPopoverShowGeneration)
+        {
+            _stackPopoverItemsView?.SelectedItems.Remove(item);
+            if (_stackPopoverItemsView is { } popover)
+            {
+                ClearOpenedItemPointerFeedback(popover, item);
+            }
+        }
+
+        UpdateSelectionCommandBar();
+        RefreshItemSelectionVisuals();
+    }
+
+    private void ClearOpenedItemPointerFeedback(ListViewBase view, WidgetItem item)
+    {
+        // Resolve through the owning view, not the shared surface registry:
+        // an old completion must not reset a later popover or recycled item.
+        if (view.ContainerFromItem(item) is not SelectorItem container ||
+            FindDescendantByTag(container, "InteractiveSurface") is not Border border ||
+            FileItemSurface.FindOwner(border) is not { } surface ||
+            !ReferenceEquals(surface.DataContext, item))
+        {
+            return;
+        }
+
+        surface.ClearPointerFeedbackAfterOpen();
+        // Commit the final unselected state even when pointer feedback was
+        // already Normal and therefore raises no VisualStateChanged event.
+        ApplyItemSurfaceVisual(border, surface.VisualState);
     }
 
     private bool TryBeginOpenItem(string path)
@@ -178,7 +222,7 @@ public sealed partial class FileSurfaceContent
         FrameworkElement sender,
         DataContextChangedEventArgs args)
     {
-        if (sender is FileItemSurface surface)
+        if (!_isDisposed && sender is FileItemSurface surface)
         {
             ApplyOpeningStateToSurface(surface);
         }

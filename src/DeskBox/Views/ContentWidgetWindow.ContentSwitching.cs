@@ -89,7 +89,9 @@ public sealed partial class ContentWidgetWindow
         AttachFeedbackSource(content);
         AttachHostContextMenuSource(content);
         ApplyLocalizedTitleActionTooltips();
-        ApplyAppearancePreview();
+        // The window chrome changes with the active member. A cached member's
+        // content only needs updating if a real appearance notification occurred.
+        ApplyAppearancePreview(invalidateContent: false);
         RefreshCompactPresentation();
         RefreshWidgetGroupPresentation(
             animateGroupIdentity,

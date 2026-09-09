@@ -85,6 +85,48 @@ public partial class WidgetViewModel
             : Task.FromResult(false);
     }
 
+    public async Task<bool> NavigateIntoFolderShortcutAsync(
+        WidgetItem item,
+        Action? beforeItemsReplaced = null)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        if (_isDisposed ||
+            !IsEmbeddedFolderNavigationEnabled ||
+            !FolderNavigationPathPolicy.IsFolderShortcutCandidate(item) ||
+            !Items.Contains(item))
+        {
+            return false;
+        }
+
+        string shortcutPath = item.Path;
+        string storedTargetPath = await _fileService
+            .GetStoredShortcutTargetAsync(shortcutPath);
+        if (_isDisposed ||
+            !IsEmbeddedFolderNavigationEnabled ||
+            !Items.Contains(item) ||
+            !string.Equals(
+                item.Path,
+                shortcutPath,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        // Refresh the runtime metadata after the activation-time read. The
+        // shortcut stays a file item; only its activation target is hydrated.
+        item.TargetPath = storedTargetPath;
+        if (!FolderNavigationPathPolicy.TryNormalizeShortcutTargetPath(
+                storedTargetPath,
+                out string targetPath))
+        {
+            return false;
+        }
+
+        return await NavigateToFolderAsync(
+            targetPath,
+            beforeItemsReplaced: beforeItemsReplaced);
+    }
+
     public Task<bool> NavigateUpAsync(Action? beforeItemsReplaced = null)
     {
         if (!CanNavigateUp ||
@@ -144,43 +186,37 @@ public partial class WidgetViewModel
             return false;
         }
 
-        string requestedPath;
-        string rootPath;
-        string targetPath;
-        bool mappedRootRequested;
-        try
-        {
-            requestedPath = Path.GetFullPath(folderPath);
-            mappedRootRequested = PathsEqual(
-                requestedPath,
-                MappedFolderPath);
-            rootPath = mappedRootRequested
-                ? ResolveMappedFolderTraversalPath()
-                : GetMappedFolderTraversalPath();
-            if (mappedRootRequested)
-            {
-                targetPath = rootPath;
-            }
-            else if (!FileService.TryResolveExistingPathForTraversal(
-                         requestedPath,
-                         out targetPath))
-            {
-                return false;
-            }
-        }
-        catch
+        string mappedFolderPath = MappedFolderPath;
+        string? mappedFolderTraversalPath = _mappedFolderTraversalPath;
+        FolderNavigationPathResolution? resolution = await Task.Run(() =>
+            FolderNavigationPathPolicy.TryResolve(
+                folderPath,
+                mappedFolderPath,
+                mappedFolderTraversalPath,
+                out FolderNavigationPathResolution resolved)
+                ? resolved
+                : null);
+        if (_isDisposed ||
+            resolution is null ||
+            !PathsEqual(MappedFolderPath, mappedFolderPath) ||
+            !string.Equals(
+                _mappedFolderTraversalPath,
+                mappedFolderTraversalPath,
+                StringComparison.OrdinalIgnoreCase) ||
+            (!allowWhenEmbeddedNavigationDisabled &&
+             !IsEmbeddedFolderNavigationEnabled))
         {
             return false;
         }
 
-        if (!Directory.Exists(targetPath) ||
-            !FileService.TryIsPathUnderDirectoryResolved(
-                targetPath,
-                rootPath,
-                out bool isUnderMappedRoot) ||
-            !isUnderMappedRoot)
+        string requestedPath = resolution.RequestedPath;
+        string rootPath = resolution.RootPath;
+        string targetPath = resolution.TargetPath;
+        bool mappedRootRequested = resolution.MappedRootRequested;
+
+        if (string.IsNullOrWhiteSpace(_mappedFolderTraversalPath))
         {
-            return false;
+            _mappedFolderTraversalPath = rootPath;
         }
 
         if (PathsEqual(CurrentFolderPath, targetPath))

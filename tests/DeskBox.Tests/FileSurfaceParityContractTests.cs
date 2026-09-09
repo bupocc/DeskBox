@@ -960,12 +960,15 @@ public sealed class FileSurfaceParityContractTests
             "Win32Helper.SetForegroundWindow(WindowHandle)",
             stackPopoverRenameWindow,
             StringComparison.Ordinal);
+        // The editor focuses through InlineEditorFocus: the freshly created
+        // window content is not focusable until its first layout pass, and a
+        // bare Focus call at this point fails silently.
         Assert.Contains(
-            "Editor.Focus(FocusState.Programmatic)",
+            "InlineEditorFocus.FocusWhenLoaded(",
             stackPopoverRenameWindow,
             StringComparison.Ordinal);
         Assert.Contains(
-            "Editor.SelectAll()",
+            "static editor => editor.SelectAll()",
             stackPopoverRenameWindow,
             StringComparison.Ordinal);
         Assert.Contains(
@@ -1155,7 +1158,15 @@ public sealed class FileSurfaceParityContractTests
             stackPopover,
             StringComparison.Ordinal);
         Assert.Contains(
-            "if (IsItemInStackPopover(item) ||",
+            "isFolderShortcut || (!isStackPopoverItem && item.IsFolder)",
+            navigation,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "NavigateIntoFolderShortcutAsync(",
+            navigation,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "await OpenFileItemAsync(item)",
             navigation,
             StringComparison.Ordinal);
         Assert.Contains(
@@ -1171,7 +1182,7 @@ public sealed class FileSurfaceParityContractTests
             source,
             StringComparison.Ordinal);
         Assert.Contains(
-            "ViewModel.StabilizeStackDisplay()",
+            "ViewModel.PrepareStackDisplayForReuse()",
             source,
             StringComparison.Ordinal);
         Assert.Contains(

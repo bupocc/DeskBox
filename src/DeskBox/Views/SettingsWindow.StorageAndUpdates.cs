@@ -105,6 +105,11 @@ public sealed partial class SettingsWindow
 
     private void RefreshManagedStoragePathWarning()
     {
+        if (ManagedStoragePathWarningText is null)
+        {
+            return;
+        }
+
         ManagedStoragePathAssessment assessment =
             ManagedStoragePathService.AssessPath(ViewModel.ManagedStorageRootPath);
         var warnings = new List<string>();
@@ -135,6 +140,11 @@ public sealed partial class SettingsWindow
 
     private void RefreshManagedStorageDesktopShortcutState()
     {
+        if (ManagedStorageDesktopShortcutStatusText is null)
+        {
+            return;
+        }
+
         bool hasShortcut =
             App.Current.ManagedStorageDesktopShortcutService.HasShortcut();
         ManagedStorageDesktopShortcutStatusText.Text = _localizationService.T(

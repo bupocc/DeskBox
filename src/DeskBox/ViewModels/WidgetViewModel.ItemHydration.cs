@@ -430,7 +430,11 @@ public partial class WidgetViewModel
         {
             if (clearCacheBeforeLoad)
             {
-                _fileService.ClearIconCache(path, _hideShortcutArrowOverlay, _showImageFilesAsIcons);
+                _fileService.ClearIconCache(
+                    path,
+                    _hideShortcutArrowOverlay,
+                    _showImageFilesAsIcons,
+                    resetTransientFailures: false);
             }
 
             var icon = await _fileService.GetIconAsync(

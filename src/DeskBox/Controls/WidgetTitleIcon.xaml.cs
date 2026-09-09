@@ -14,6 +14,8 @@ public sealed partial class WidgetTitleIcon : UserControl
 {
     private const double DesktopTitleIconScale = 1.3d;
     private string? _currentColorAssetName;
+    private XamlPath? _activeMonoIconPath;
+    private readonly Dictionary<string, XamlPath> _monoIconPaths = new(StringComparer.Ordinal);
     private double? _surfaceCornerRadiusOverride;
     private bool _isCompactPresentation;
 
@@ -259,69 +261,61 @@ public sealed partial class WidgetTitleIcon : UserControl
 
     private void HideMonoIconPaths()
     {
-        foreach (var iconPath in GetAllMonoIconPaths())
+        if (_activeMonoIconPath is { } iconPath)
         {
             iconPath.Visibility = Visibility.Collapsed;
         }
     }
 
-    private IEnumerable<XamlPath> GetAllMonoIconPaths()
-    {
-        yield return LineDefaultPath;
-        yield return LineManagedStoragePath;
-        yield return LineMappedFolderPath;
-        yield return LineQuickCapturePath;
-        yield return LineTodoPath;
-        yield return LineMusicPath;
-        yield return LineWeatherPath;
-        yield return LineTagsPath;
-        yield return LineSearchPath;
-        yield return LineSystemMonitorPath;
-        yield return LinePomodoroPath;
-        yield return FilledDefaultPath;
-        yield return FilledManagedStoragePath;
-        yield return FilledMappedFolderPath;
-        yield return FilledQuickCapturePath;
-        yield return FilledTodoPath;
-        yield return FilledMusicPath;
-        yield return FilledWeatherPath;
-        yield return FilledTagsPath;
-        yield return FilledSearchPath;
-        yield return FilledSystemMonitorPath;
-        yield return FilledPomodoroPath;
-    }
-
     private XamlPath GetMonoIconPath(WidgetTitleIconKind kind, bool filled)
     {
-        return filled
+        string pathName = filled
             ? kind switch
             {
-                WidgetTitleIconKind.ManagedStorage => FilledManagedStoragePath,
-                WidgetTitleIconKind.MappedFolder => FilledMappedFolderPath,
-                WidgetTitleIconKind.QuickCapture => FilledQuickCapturePath,
-                WidgetTitleIconKind.Todo => FilledTodoPath,
-                WidgetTitleIconKind.Music => FilledMusicPath,
-                WidgetTitleIconKind.Weather => FilledWeatherPath,
-                WidgetTitleIconKind.Tags => FilledTagsPath,
-                WidgetTitleIconKind.Search => FilledSearchPath,
-                WidgetTitleIconKind.SystemMonitor => FilledSystemMonitorPath,
+                WidgetTitleIconKind.ManagedStorage => "FilledManagedStoragePath",
+                WidgetTitleIconKind.MappedFolder => "FilledMappedFolderPath",
+                WidgetTitleIconKind.QuickCapture => "FilledQuickCapturePath",
+                WidgetTitleIconKind.Todo => "FilledTodoPath",
+                WidgetTitleIconKind.Music => "FilledMusicPath",
+                WidgetTitleIconKind.Weather => "FilledWeatherPath",
+                WidgetTitleIconKind.Tags => "FilledTagsPath",
+                WidgetTitleIconKind.Search => "FilledSearchPath",
+                WidgetTitleIconKind.SystemMonitor => "FilledSystemMonitorPath",
                 WidgetTitleIconKind.Pomodoro => FilledPomodoroPath,
-                _ => FilledDefaultPath
+                _ => "FilledDefaultPath"
             }
             : kind switch
             {
-                WidgetTitleIconKind.ManagedStorage => LineManagedStoragePath,
-                WidgetTitleIconKind.MappedFolder => LineMappedFolderPath,
-                WidgetTitleIconKind.QuickCapture => LineQuickCapturePath,
-                WidgetTitleIconKind.Todo => LineTodoPath,
-                WidgetTitleIconKind.Music => LineMusicPath,
-                WidgetTitleIconKind.Weather => LineWeatherPath,
-                WidgetTitleIconKind.Tags => LineTagsPath,
-                WidgetTitleIconKind.Search => LineSearchPath,
-                WidgetTitleIconKind.SystemMonitor => LineSystemMonitorPath,
+                WidgetTitleIconKind.ManagedStorage => "LineManagedStoragePath",
+                WidgetTitleIconKind.MappedFolder => "LineMappedFolderPath",
+                WidgetTitleIconKind.QuickCapture => "LineQuickCapturePath",
+                WidgetTitleIconKind.Todo => "LineTodoPath",
+                WidgetTitleIconKind.Music => "LineMusicPath",
+                WidgetTitleIconKind.Weather => "LineWeatherPath",
+                WidgetTitleIconKind.Tags => "LineTagsPath",
+                WidgetTitleIconKind.Search => "LineSearchPath",
+                WidgetTitleIconKind.SystemMonitor => "LineSystemMonitorPath",
                 WidgetTitleIconKind.Pomodoro => LinePomodoroPath,
-                _ => LineDefaultPath
+                _ => "LineDefaultPath"
             };
+
+        // Materialize only the selected geometry, then keep it for immediate
+        // reuse when icon mode or widget kind changes again.
+        if (_activeMonoIconPath is { } activePath && activePath.Name == pathName)
+        {
+            return activePath;
+        }
+
+        if (!_monoIconPaths.TryGetValue(pathName, out var iconPath))
+        {
+            iconPath = (Resources[pathName + "Template"] as DataTemplate)?.LoadContent() as XamlPath ??
+                throw new InvalidOperationException($"Missing title icon template: {pathName}");
+            (filled ? FilledIconHost : LineIconHost).Children.Add(iconPath);
+            _monoIconPaths.Add(pathName, iconPath);
+        }
+
+        _activeMonoIconPath = iconPath;
+        return iconPath;
     }
 
     private static bool IsFluentFilledPathKind(WidgetTitleIconKind kind)

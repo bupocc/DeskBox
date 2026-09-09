@@ -154,8 +154,9 @@ public sealed class FileMetaService : IDisposable
     {
         // Shortcuts keep their resolved shell icon. Image files request a thumbnail
         // instead of the icon of the user's default image viewer.
-        string extension = Path.GetExtension(item.Title ?? item.DetailPath ?? "").ToLowerInvariant();
-        if (extension == ".lnk")
+        string extension = Path.GetExtension(
+            item.DetailPath ?? item.Title ?? string.Empty).ToLowerInvariant();
+        if (ShortcutHelper.IsShortcutPath(item.DetailPath))
         {
             return await IconHelper.GetIconAsync(
                 item.DetailPath!,

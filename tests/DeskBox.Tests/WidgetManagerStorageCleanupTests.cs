@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using DeskBox.Models;
 using DeskBox.Services;
 
@@ -58,7 +59,7 @@ public sealed class WidgetManagerStorageCleanupTests : IDisposable
     }
 
     [Fact]
-    public void EnsureFileWidgetPathAvailable_RejectsEqualAndNestedWidgetPaths()
+    public void EnsureFileWidgetPathAvailable_AllowsStrictlyNestedExternalWidgetPaths()
     {
         string mappedFolder = Directory.CreateDirectory(Path.Combine(_tempRoot, "mapped", "projects")).FullName;
         _settingsService.Settings.Widgets.Add(new WidgetConfig
@@ -71,12 +72,92 @@ public sealed class WidgetManagerStorageCleanupTests : IDisposable
 
         Assert.Throws<InvalidOperationException>(() =>
             _widgetManager.EnsureFileWidgetPathAvailable(mappedFolder));
-        Assert.Throws<InvalidOperationException>(() =>
-            _widgetManager.EnsureFileWidgetPathAvailable(Path.Combine(mappedFolder, "nested")));
-        Assert.Throws<InvalidOperationException>(() =>
-            _widgetManager.EnsureFileWidgetPathAvailable(Path.GetDirectoryName(mappedFolder)!));
+        _widgetManager.EnsureFileWidgetPathAvailable(
+            Path.Combine(mappedFolder, "nested"));
+        _widgetManager.EnsureFileWidgetPathAvailable(
+            Path.GetDirectoryName(mappedFolder)!);
 
         _widgetManager.EnsureFileWidgetPathAvailable(Path.Combine(_tempRoot, "mapped", "sibling"));
+    }
+
+    [Fact]
+    public void EnsureFileWidgetPathAvailable_RejectsOverlapWithManagedWidget()
+    {
+        string managedFolder = Directory.CreateDirectory(
+            Path.Combine(_storageRoot, "Managed")).FullName;
+        _settingsService.Settings.Widgets.Add(new WidgetConfig
+        {
+            Name = "Managed",
+            WidgetKind = WidgetKind.File,
+            MappedFolderPath = managedFolder,
+            FollowsDefaultStoragePath = true,
+            ManagedFolderName = "Managed"
+        });
+
+        Assert.Throws<InvalidOperationException>(() =>
+            _widgetManager.EnsureFileWidgetPathAvailable(
+                Path.Combine(managedFolder, "nested")));
+        Assert.Throws<InvalidOperationException>(() =>
+            _widgetManager.EnsureFileWidgetPathAvailable(
+                Path.GetDirectoryName(managedFolder)!));
+    }
+
+    [Fact]
+    public void EnsureFileWidgetPathAvailable_RejectsManagedCandidateOverlappingExternalWidget()
+    {
+        string mappedFolder = Directory.CreateDirectory(
+            Path.Combine(_tempRoot, "mapped", "projects")).FullName;
+        _settingsService.Settings.Widgets.Add(new WidgetConfig
+        {
+            Name = "External",
+            WidgetKind = WidgetKind.File,
+            MappedFolderPath = mappedFolder,
+            FollowsDefaultStoragePath = false
+        });
+
+        Assert.Throws<InvalidOperationException>(() =>
+            _widgetManager.EnsureFileWidgetPathAvailable(
+                Path.Combine(mappedFolder, "managed"),
+                candidateFollowsDefaultStoragePath: true));
+    }
+
+    [Fact]
+    public void EnsureFileWidgetPathAvailable_RejectsExternalMappingOverlappingManagedRoot()
+    {
+        Assert.Throws<InvalidOperationException>(() =>
+            _widgetManager.EnsureFileWidgetPathAvailable(
+                Path.Combine(_storageRoot, "external")));
+        Assert.Throws<InvalidOperationException>(() =>
+            _widgetManager.EnsureFileWidgetPathAvailable(
+                Path.GetDirectoryName(_storageRoot)!));
+    }
+
+    [Fact]
+    public void EnsureFileWidgetPathAvailable_RejectsAliasOfExistingExternalWidget()
+    {
+        string mappedFolder = Directory.CreateDirectory(
+            Path.Combine(_tempRoot, "mapped-alias-target")).FullName;
+        string mappedAlias = Path.Combine(_tempRoot, "mapped-alias");
+        _settingsService.Settings.Widgets.Add(new WidgetConfig
+        {
+            Name = "External",
+            WidgetKind = WidgetKind.File,
+            MappedFolderPath = mappedFolder,
+            FollowsDefaultStoragePath = false
+        });
+
+        Assert.True(
+            TryCreateDirectoryJunction(mappedAlias, mappedFolder),
+            "The Windows test host must support creating a directory junction.");
+        try
+        {
+            Assert.Throws<InvalidOperationException>(() =>
+                _widgetManager.EnsureFileWidgetPathAvailable(mappedAlias));
+        }
+        finally
+        {
+            TryDeleteDirectoryJunction(mappedAlias);
+        }
     }
 
     [Fact]
@@ -407,34 +488,46 @@ public sealed class WidgetManagerStorageCleanupTests : IDisposable
     }
 
     [Fact]
-    public async Task SaveQuickCaptureItemToFileWidgetAsync_WritesRealFiles()
+    public async Task FileImport_GoesThroughThePortAndWritesRealFiles()
     {
         string managedFolder = Directory.CreateDirectory(Path.Combine(_storageRoot, "Target")).FullName;
         var widget = CreateManagedWidget("Target", managedFolder);
         _settingsService.Settings.Widgets.Add(widget);
 
-        string? textPath = await _widgetManager.SaveQuickCaptureItemToFileWidgetAsync(
-            new QuickCaptureItem
-            {
-                Type = QuickCaptureItemType.Text,
-                Body = "hello world"
-            },
-            widget.Id,
-            "Capture");
+        // Stage 3b wiring: the producer-side translation (QuickCaptureService)
+        // plans the import; the IFileWidgetImportTarget implementation owns
+        // folders and writes. Same flow production uses.
+        var textPlan = QuickCaptureService.BuildFileImportPlan(
+            new QuickCaptureItem { Type = QuickCaptureItemType.Text, Body = "hello world" },
+            imageFileNamePrefix: "Capture",
+            textFileNamePrefix: "Capture",
+            linkFileNamePrefix: "Capture");
+        Assert.NotNull(textPlan);
+        Assert.Null(textPlan.SourceFilePath);
+        string? textPath = await _widgetManager.TryImportTextAsync(
+            textPlan.Text!,
+            textPlan.FileName,
+            widget.Id);
 
-        string? linkPath = await _widgetManager.SaveQuickCaptureItemToFileWidgetAsync(
+        var linkPlan = QuickCaptureService.BuildFileImportPlan(
             new QuickCaptureItem
             {
                 Type = QuickCaptureItemType.Link,
                 Body = "https://example.com/docs",
                 Url = "https://example.com/docs"
             },
-            widget.Id,
-            "Capture");
+            imageFileNamePrefix: "Capture",
+            textFileNamePrefix: "Capture",
+            linkFileNamePrefix: "Capture");
+        Assert.NotNull(linkPlan);
+        string? linkPath = await _widgetManager.TryImportTextAsync(
+            linkPlan.Text!,
+            linkPlan.FileName,
+            widget.Id);
 
         string sourceImagePath = Path.Combine(_tempRoot, "source.png");
         await File.WriteAllBytesAsync(sourceImagePath, [1, 2, 3, 4]);
-        string? imagePath = await _widgetManager.SaveQuickCaptureItemToFileWidgetAsync(
+        var imagePlan = QuickCaptureService.BuildFileImportPlan(
             new QuickCaptureItem
             {
                 Type = QuickCaptureItemType.Image,
@@ -442,8 +535,15 @@ public sealed class WidgetManagerStorageCleanupTests : IDisposable
                 ImagePath = sourceImagePath,
                 UpdatedAt = new DateTimeOffset(2026, 6, 21, 14, 32, 0, TimeSpan.Zero)
             },
+            imageFileNamePrefix: "Capture",
+            textFileNamePrefix: "Capture",
+            linkFileNamePrefix: "Capture");
+        Assert.NotNull(imagePlan);
+        Assert.Null(imagePlan.Text);
+        string? imagePath = await _widgetManager.TryImportFileAsync(
+            imagePlan.SourceFilePath!,
             widget.Id,
-            "Capture");
+            imagePlan.FileName);
 
         Assert.NotNull(textPath);
         Assert.Equal("hello world", await File.ReadAllTextAsync(textPath));
@@ -458,14 +558,125 @@ public sealed class WidgetManagerStorageCleanupTests : IDisposable
         Assert.StartsWith("Capture ", Path.GetFileName(imagePath), StringComparison.Ordinal);
         Assert.EndsWith(".png", imagePath, StringComparison.OrdinalIgnoreCase);
 
-        var target = Assert.Single(_widgetManager.GetQuickCaptureFileWidgetTargets());
+        var target = Assert.Single(_widgetManager.GetImportTargets());
         Assert.Equal(widget.Id, target.WidgetId);
-        Assert.Equal(managedFolder, target.FolderPath);
+        Assert.Equal(widget.Name, target.Name);
         Assert.Equal(widget.Id, _settingsService.Settings.LastQuickCaptureFileWidgetId);
 
-        var lastTarget = _widgetManager.GetLastQuickCaptureFileWidgetTarget();
+        var lastTarget = _widgetManager.GetLastImportTarget();
         Assert.NotNull(lastTarget);
         Assert.Equal(widget.Id, lastTarget.WidgetId);
+    }
+
+    [Fact]
+    public void BuildFileImportPlan_ReturnsNullForNothingImportable()
+    {
+        // An image whose file vanished plans nothing (import returns null,
+        // matching the pre-wiring behavior).
+        Assert.Null(QuickCaptureService.BuildFileImportPlan(
+            new QuickCaptureItem
+            {
+                Type = QuickCaptureItemType.Image,
+                ImagePath = Path.Combine(_tempRoot, "missing.png")
+            },
+            imageFileNamePrefix: "Capture",
+            textFileNamePrefix: "Capture",
+            linkFileNamePrefix: "Capture"));
+
+        // Empty body text plans nothing.
+        Assert.Null(QuickCaptureService.BuildFileImportPlan(
+            new QuickCaptureItem { Type = QuickCaptureItemType.Text, Body = "   " },
+            imageFileNamePrefix: "Capture",
+            textFileNamePrefix: "Capture",
+            linkFileNamePrefix: "Capture"));
+
+        // A link whose URL is not absolute falls back to the text plan.
+        var fallbackPlan = QuickCaptureService.BuildFileImportPlan(
+            new QuickCaptureItem { Type = QuickCaptureItemType.Link, Body = "not a url" },
+            imageFileNamePrefix: "Capture",
+            textFileNamePrefix: "Capture",
+            linkFileNamePrefix: "Capture");
+        Assert.NotNull(fallbackPlan);
+        Assert.Equal("not a url", fallbackPlan.Text);
+        Assert.EndsWith(".txt", fallbackPlan.FileName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ImportSink_ConfinesProducerSuppliedFileNamesToTheWidgetFolder()
+    {
+        // Producers cannot be trusted to sanitize: traversal, rooted and
+        // absolute-path names must be reduced to a harmless in-folder name
+        // (or rejected), never escape the sink.
+        string managedFolder = Directory.CreateDirectory(Path.Combine(_storageRoot, "Confined")).FullName;
+        var widget = CreateManagedWidget("Confined", managedFolder);
+        _settingsService.Settings.Widgets.Add(widget);
+
+        Assert.Null(await _widgetManager.TryImportTextAsync(
+            "escape", "..\\..\\escaped.txt", widget.Id));
+        Assert.Null(await _widgetManager.TryImportTextAsync(
+            "escape", "../escaped.txt", widget.Id));
+        Assert.Null(await _widgetManager.TryImportTextAsync(
+            "escape", Path.Combine(_tempRoot, "absolute-escape.txt"), widget.Id));
+
+        Assert.False(File.Exists(Path.Combine(_storageRoot, "escaped.txt")));
+        Assert.False(File.Exists(Path.Combine(_tempRoot, "absolute-escape.txt")));
+        Assert.Empty(Directory.GetFiles(managedFolder));
+    }
+
+    [Fact]
+    public async Task ImportSink_LeavesNoPartialFileWhenCancelledOrFailed()
+    {
+        string managedFolder = Directory.CreateDirectory(Path.Combine(_storageRoot, "Atomic")).FullName;
+        var widget = CreateManagedWidget("Atomic", managedFolder);
+        _settingsService.Settings.Widgets.Add(widget);
+
+        string sourcePath = Path.Combine(_tempRoot, "cancel-source.bin");
+        await File.WriteAllBytesAsync(sourcePath, new byte[64 * 1024]);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            _widgetManager.TryImportFileAsync(sourcePath, widget.Id, "partial.bin", cts.Token));
+
+        Assert.False(File.Exists(Path.Combine(managedFolder, "partial.bin")));
+        Assert.Empty(Directory.GetFiles(managedFolder, ".import-*.tmp"));
+    }
+
+    [Fact]
+    public void ImportDestination_DriveRootMappedFolderStaysImportable()
+    {
+        // A File widget mapped to a drive root used to be wrongly rejected:
+        // folder + separator ("C:\" + "\") can never prefix-match a child
+        // ("C:\abc.txt"). GetRelativePath-based containment handles roots.
+        bool resolved = WidgetManager.TryResolveImportDestination(
+            @"C:\",
+            "abc.txt",
+            out string destinationPath,
+            out string baseCandidatePath);
+
+        Assert.True(resolved);
+        Assert.Equal(Path.GetFullPath(@"C:\abc.txt"), baseCandidatePath);
+        Assert.Equal(baseCandidatePath, destinationPath);
+    }
+
+    [Fact]
+    public void Import_NeverOverwritesAFileCreatedAfterPathResolution()
+    {
+        // The destination was taken between GetAvailablePath and the rename:
+        // the import must land on the next free variant, never clobber.
+        string folder = Directory.CreateDirectory(Path.Combine(_tempRoot, "NoClobber")).FullName;
+        string baseCandidate = Path.Combine(folder, "race.txt");
+        string occupied = Path.Combine(folder, "race.txt");
+        File.WriteAllText(occupied, "someone else");
+        string tempPath = Path.Combine(folder, ".import-test.tmp");
+        File.WriteAllText(tempPath, "mine");
+
+        string finalPath = WidgetManager.MoveImportIntoPlace(tempPath, baseCandidate, occupied);
+
+        Assert.NotEqual(occupied, finalPath);
+        Assert.Equal("someone else", File.ReadAllText(occupied));
+        Assert.Equal("mine", File.ReadAllText(finalPath));
+        Assert.StartsWith("race", Path.GetFileName(finalPath), StringComparison.Ordinal);
     }
 
     private static WidgetConfig CreateManagedWidget(string name, string folderPath)
@@ -478,6 +689,41 @@ public sealed class WidgetManagerStorageCleanupTests : IDisposable
             FollowsDefaultStoragePath = true,
             ManagedFolderName = Path.GetFileName(folderPath)
         };
+    }
+
+    private static bool TryCreateDirectoryJunction(string junction, string target)
+    {
+        try
+        {
+            using var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = $"/d /c mklink /J \"{junction}\" \"{target}\"",
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            });
+            process?.WaitForExit();
+            return process?.ExitCode == 0 && Directory.Exists(junction);
+        }
+        catch (Exception ex) when (
+            ex is IOException or UnauthorizedAccessException or
+            System.ComponentModel.Win32Exception)
+        {
+            return false;
+        }
+    }
+
+    private static void TryDeleteDirectoryJunction(string junction)
+    {
+        try
+        {
+            Directory.Delete(junction, recursive: false);
+        }
+        catch
+        {
+        }
     }
 
     public void Dispose()

@@ -188,24 +188,27 @@ public sealed class AotStage5B4B1ContractTests
             xaml,
             StringComparison.Ordinal);
         Assert.Contains(
-            "ItemsSource=\"{x:Bind ViewModel.FileStackCustomRules, Mode=OneWay}\"",
+            "ItemsSource=\"{x:Bind FileStackCustomRules, Mode=OneWay}\"",
             xaml,
             StringComparison.Ordinal);
-        Assert.Equal(309, CountOccurrences(bindableViewModel, "nameof("));
+        Assert.Equal(327, CountOccurrences(bindableViewModel, "nameof("));
+        Assert.Contains("nameof(ImmediateHiddenWorkingSetTrimEnabled)", bindableViewModel, StringComparison.Ordinal);
         Assert.DoesNotContain("nameof(WidgetCapsuleModeEnabled)", bindableViewModel, StringComparison.Ordinal);
         Assert.Contains("nameof(SelectedWidgetCapsuleBarPlacement)", bindableViewModel, StringComparison.Ordinal);
         Assert.DoesNotContain("nameof(ResetAllCapsuleOverridesCommand)", bindableViewModel, StringComparison.Ordinal);
         Assert.DoesNotContain("nameof(ResetCapsuleWidthOverridesCommand)", bindableViewModel, StringComparison.Ordinal);
         Assert.Contains(
-            "Command=\"{x:Bind ViewModel.ResetAllCapsuleOverridesCommand, Mode=OneWay}\"",
+            "Command=\"{x:Bind ResetAllCapsuleOverridesCommand, Mode=OneWay}\"",
             xaml,
             StringComparison.Ordinal);
+        Assert.Contains("x:DataType=\"viewModels:SettingsViewModel\"", xaml, StringComparison.Ordinal);
         Assert.Contains(
             "Command=\"{x:Bind ViewModel.ResetCapsuleWidthOverridesCommand, Mode=OneWay}\"",
             capsuleXaml,
             StringComparison.Ordinal);
         Assert.Contains("ViewModelProperty", capsuleCodeBehind, StringComparison.Ordinal);
-        Assert.Contains("CapsuleModeSection.ViewModel = ViewModel", window, StringComparison.Ordinal);
+        Assert.Contains("capsuleSettings.ViewModel = ViewModel",
+            ReadRepositoryFile("src/DeskBox/Views/SettingsWindow.DeferredSections.cs"), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -298,8 +301,8 @@ public sealed class AotStage5B4B1ContractTests
         string baseline = ReadRepositoryFile("tests/DeskBox.Tests/JsonSerializationBaselineContractTests.cs");
         string source = ReadRepositoryFile("src/DeskBox/App.AotManagedUiSmoke.cs");
 
-        Assert.Contains("Assert.Equal(28, actual.Count);", baseline, StringComparison.Ordinal);
-        Assert.Contains("Assert.Equal(64, actual.Values.Sum());", baseline, StringComparison.Ordinal);
+        Assert.Contains("Assert.Equal(29, actual.Count);", baseline, StringComparison.Ordinal);
+        Assert.Contains("Assert.Equal(67, actual.Values.Sum());", baseline, StringComparison.Ordinal);
         Assert.Contains("\"src/DeskBox/App.AotManagedUiSmoke.cs\"", baseline, StringComparison.Ordinal);
         Assert.Equal(1, CountOccurrences(source, "JsonSerializer.Serialize("));
     }
@@ -311,10 +314,10 @@ public sealed class AotStage5B4B1ContractTests
         string launcher = ReadRepositoryFile("scripts/start-aot-preview.ps1");
         string project = ReadRepositoryFile("src/DeskBox/DeskBox.csproj");
 
-        Assert.Contains("$auditProfileVersion = 58", audit, StringComparison.Ordinal);
+        Assert.Contains("$auditProfileVersion = 62", audit, StringComparison.Ordinal);
         Assert.Contains("schemaVersion = 55", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4B1", audit, StringComparison.Ordinal);
-        Assert.Contains("$RequiredAuditProfileVersion = 58", launcher, StringComparison.Ordinal);
+        Assert.Contains("$RequiredAuditProfileVersion = 62", launcher, StringComparison.Ordinal);
         Assert.Contains("$RequiredSummarySchemaVersion = 55", launcher, StringComparison.Ordinal);
         Assert.Contains("stage 5B-4C3B2B1", project, StringComparison.Ordinal);
         Assert.Contains("deep settings", project, StringComparison.OrdinalIgnoreCase);
@@ -335,14 +338,15 @@ public sealed class AotStage5B4B1ContractTests
         Assert.Contains("stage5B4B1RequiredFileWidgetProjectionPatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4B1RequiredWeatherProjectionPatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4B1RequiredCommandXamlPatterns", audit, StringComparison.Ordinal);
+        Assert.Contains("stage5B4B1RequiredDeferredSectionPatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4B1RequiredCapsuleCommandXamlPatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4B1RequiredCapsuleCodeBehindPatterns", audit, StringComparison.Ordinal);
-        Assert.Contains("stage5B4B1ExpectedBindableViewModelPropertyCount = 309", audit, StringComparison.Ordinal);
+        Assert.Contains("stage5B4B1ExpectedBindableViewModelPropertyCount = 327", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4B1RequiredSmokeScriptPatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4B1MissingRoutePatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4B1UnsafeMutationPatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4B1SourceWarningMessages", audit, StringComparison.Ordinal);
-        Assert.Contains("stage5B4B1ExpectedWmc1510Count = 1235", audit, StringComparison.Ordinal);
+        Assert.Contains("stage5B4B1ExpectedWmc1510Count = 867", audit, StringComparison.Ordinal);
     }
 
     private static int CountOccurrences(string value, string token)

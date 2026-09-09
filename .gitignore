@@ -70,7 +70,6 @@ shots/
 
 # Local product-video workspace and rendered previews
 /video-shotcraft/
-/outputs/
 
 # Auto-generated code audit reports
 docs/audit/

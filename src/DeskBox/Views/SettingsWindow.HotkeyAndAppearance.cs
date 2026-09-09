@@ -379,6 +379,11 @@ public sealed partial class SettingsWindow
 
     private void RefreshGlobalHotkeyControls()
     {
+        if (GlobalHotkeyCaptureButton is null)
+        {
+            return;
+        }
+
         GlobalHotkeyActivation activation =
             App.Current.GlobalHotkeyService?.CurrentActivation ??
             ViewModel.GetCurrentGlobalHotkeyActivation();

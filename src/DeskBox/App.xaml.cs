@@ -1,6 +1,7 @@
 // Copyright (c) DeskBox. All rights reserved.
 
 using CommunityToolkit.Mvvm.Input;
+using DeskBox.Contracts;
 using DeskBox.Controls.WidgetContents;
 using DeskBox.Helpers;
 using DeskBox.Models;
@@ -119,6 +120,7 @@ public partial class App : Application
     private bool _externalActivationHandling;
     private DateTimeOffset? _lastBareExternalActivationAtUtc;
     private readonly bool _processStartupLaunchDetected;
+    private Microsoft.UI.Xaml.DispatcherTimer? _automaticBackupTimer;
 
     public static new App Current => (App)Application.Current;
 
@@ -153,6 +155,15 @@ public partial class App : Application
         _everythingSearchService?.CurrentSnapshot.State == EverythingConnectionState.Connected;
     internal int SearchMetaCacheCount => _fileMetaService?.CachedIconCount ?? 0;
     public WidgetManager? WidgetManager { get; private set; }
+
+    /// <summary>
+    /// Stage 3b capability-port views of the widget manager: callers depend
+    /// on these port types instead of the concrete manager (pluginization
+    /// roadmap stage 3, wire-first).
+    /// </summary>
+    public ITodoReminderPresenter? TodoReminderPresenter => WidgetManager;
+    public IFileWidgetImportTarget? FileWidgetImport => WidgetManager;
+
     public ResizeGuideOverlayService ResizeGuideOverlay { get; private set; } = null!;
     public NativeAppNotificationService? NativeNotificationService => _nativeNotificationService;
     public DisplayAreaWatcherService? DisplayAreaWatcher => _displayAreaWatcher;
@@ -247,8 +258,9 @@ public partial class App : Application
 
         SettingsService = Services.GetRequiredService<SettingsService>();
         SettingsService.PersistenceFailed += OnSettingsPersistenceFailed;
-        _ = LegacySearchIndexCleanupService.TryCleanup();
         DataBackupService = Services.GetRequiredService<DeskBoxDataBackupService>();
+        DataBackupService.AutomaticSnapshotFallbackDetected += OnAutomaticBackupFallbackDetected;
+        _ = LegacySearchIndexCleanupService.TryCleanup();
         AttachmentHealthService = Services.GetRequiredService<DeskBoxAttachmentHealthService>();
         DiagnosticsBundleService = Services.GetRequiredService<DeskBoxDiagnosticsBundleService>();
         FileService = Services.GetRequiredService<FileService>();
@@ -877,6 +889,11 @@ public partial class App : Application
 
         try
         {
+            // Dev native package bootstrap: install through the B1 pipeline
+            // once at startup when DESKBOX_DEV_NATIVE_GLANCE points at a
+            // package directory. Compiled only with EnableDeskBoxNativeDevPilot.
+            DeskBox.Services.Plugins.NativeWidgetPilot.RunDevBootstrap();
+
             string? updateInstallOutcome = TryGetUpdateInstallOutcome(Environment.GetCommandLineArgs());
             IsStartupMode = _processStartupLaunchDetected || isStartupLaunch;
             UiDispatcherQueue = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
@@ -888,11 +905,20 @@ public partial class App : Application
                 DeskBoxDataPathService.Current.DataDirectory,
                 "settings.json"));
 
-            // Capture the previous session's data before any startup normalization writes.
+            // Capture the previous session's data before any startup normalization
+            // writes. Settings are not loaded yet, so the backup schedule and folder
+            // are read from the raw settings file; unreadable values fall back to
+            // the defaults, matching the pre-setting behavior.
+            DataBackupService.UpdateAutomaticBackupOptions(
+                DataBackupSettingsPolicy.ReadStartupOptions(
+                    Path.Combine(DeskBoxDataPathService.Current.DataDirectory, "settings.json")));
             await DataBackupService.CreateAutomaticSnapshotIfDueAsync();
 
             // Phase 1: Load settings (must complete first)
             await SettingsService.LoadAsync();
+            RefreshAutomaticBackupOptionsFromSettings();
+            SettingsService.SettingsChanged += OnBackupSettingsChanged;
+            StartAutomaticBackupTimer();
             string requestedCornerPreference = SettingsService.Settings.WidgetCornerPreference;
             string effectiveCornerPreference =
                 WindowsCompatibilityService.ResolveEffectiveWidgetCornerPreference(
@@ -938,6 +964,11 @@ public partial class App : Application
 
             WidgetManager = new WidgetManager(SettingsService, FileService, OrganizerService, themeService, quickCaptureService, localizationService);
             WidgetManager.TrayLayerStateChanged += UpdateTrayLayerStateText;
+            // Stage 3b, cut point 3: the App owns its services and reacts to
+            // feature enable-state changes through the port event instead of
+            // the manager reaching back into App.Current (host-lifetime
+            // subscription; the manager is created exactly once).
+            WidgetManager.FeatureStateChanged += OnFeatureStateChanged;
             DesktopDoubleClickActivationService = new DesktopDoubleClickActivationService(
                 SettingsService,
                 ToggleWidgetsFromDesktopDoubleClickAsync);
@@ -1624,22 +1655,15 @@ public partial class App : Application
         string? itemId = null,
         bool preferTodayFilter = false)
     {
-        if (WidgetManager is null)
+        if (TodoReminderPresenter is not { } presenter)
         {
             return false;
         }
 
-        TodoReminderTargetPresentationResult presentation =
-            await WidgetManager.ShowTodoReminderTargetAsync(
-                widgetId,
-                itemId,
-                preferTodayFilter);
-        Log(
-            $"[Notification] Todo target presentation widget={presentation.WidgetId} " +
-            $"item={presentation.ItemId ?? "none"} hwnd={presentation.WindowHandle} " +
-            $"visible={presentation.Visible} xamlRoot={presentation.HasXamlRoot} " +
-            $"itemPresented={presentation.ItemPresented} " +
-            $"targetPresented={presentation.TargetPresented}");
+        TodoReminderPresentationResult presentation = await presenter.PresentReminderTargetAsync(
+            widgetId,
+            itemId,
+            preferTodayFilter);
         return presentation.TargetPresented;
     }
 
@@ -2335,6 +2359,65 @@ public partial class App : Application
             NotificationIcon.Warning);
     }
 
+    private void RefreshAutomaticBackupOptionsFromSettings()
+    {
+        DataBackupService.UpdateAutomaticBackupOptions(
+            DataBackupSettingsPolicy.GetOptions(SettingsService.Settings));
+    }
+
+    private void OnBackupSettingsChanged()
+    {
+        RefreshAutomaticBackupOptionsFromSettings();
+        if (DataBackupService.AutomaticBackupOptions.IsEnabled)
+        {
+            _ = RunAutomaticSnapshotIfDueAsync();
+        }
+    }
+
+    private void StartAutomaticBackupTimer()
+    {
+        // The shortest supported interval is 5 minutes; a 1-minute tick keeps
+        // every preset honest without a per-interval timer rebuild.
+        _automaticBackupTimer = new Microsoft.UI.Xaml.DispatcherTimer
+        {
+            Interval = TimeSpan.FromMinutes(1)
+        };
+        _automaticBackupTimer.Tick += (_, _) =>
+        {
+            if (DataBackupService.AutomaticBackupOptions.IsEnabled)
+            {
+                _ = RunAutomaticSnapshotIfDueAsync();
+            }
+        };
+        _automaticBackupTimer.Start();
+    }
+
+    private async Task RunAutomaticSnapshotIfDueAsync()
+    {
+        try
+        {
+            await DataBackupService.CreateAutomaticSnapshotIfDueAsync();
+        }
+        catch (Exception ex)
+        {
+            Log($"[DataBackup] Periodic snapshot check failed: {ex}");
+        }
+    }
+
+    private void OnAutomaticBackupFallbackDetected()
+    {
+        if (UiDispatcherQueue is { HasThreadAccess: false } dispatcher)
+        {
+            dispatcher.TryEnqueue(OnAutomaticBackupFallbackDetected);
+            return;
+        }
+
+        ShowSettingsNotification(
+            "Settings.DataBackup.AutomaticBackupDirectory.FallbackTitle",
+            "Settings.DataBackup.AutomaticBackupDirectory.FallbackBody",
+            NotificationIcon.Warning);
+    }
+
     private void ShowSettingsNotification(
         string titleKey,
         string bodyKey,
@@ -3008,6 +3091,7 @@ public partial class App : Application
     internal static void CancelBackgroundMemoryCleanup(string reason = "activity")
     {
         CancelBackgroundMemoryCleanupDelay();
+        Current._immediateHiddenWorkingSetTrimTracker.CancelPending();
 
         int generation = Interlocked.Increment(
             ref s_backgroundMemoryCleanupGeneration);
@@ -3878,7 +3962,9 @@ public partial class App : Application
         // state lazily when they come back.
         bool workingSetTrimmed = false;
         if (reclaimResult.Executed &&
-            SettingsService.Settings.IdleWorkingSetTrimEnabled)
+            SettingsService.Settings.IdleWorkingSetTrimEnabled &&
+            !(SettingsService.Settings.ImmediateHiddenWorkingSetTrimEnabled &&
+              _immediateHiddenWorkingSetTrimTracker.TrimmedCurrentHiddenSession))
         {
             workingSetTrimmed = Win32Helper.TrimWorkingSet();
             if (workingSetTrimmed)
@@ -3902,6 +3988,8 @@ public partial class App : Application
             $"workingSetBeforeMB={before.WorkingSetBytes / (1024.0 * 1024):F1} " +
             $"workingSetAfterMB={after.WorkingSetBytes / (1024.0 * 1024):F1} " +
             $"releasedHeapMB={reclaimResult.ReleasedHeapBytes / (1024.0 * 1024):F1} " +
+            $"reclaimPrivateBeforeMB={reclaimResult.PrivateBeforeBytes / (1024.0 * 1024):F1} " +
+            $"reclaimPrivateAfterMB={reclaimResult.PrivateAfterBytes / (1024.0 * 1024):F1} " +
             $"reason={triggerReason} " +
             $"workingSetTrimmed={workingSetTrimmed} fullViewRebuilds=0");
         PerformanceLogger.Mark(
@@ -3909,6 +3997,7 @@ public partial class App : Application
             $"status={reclaimResult.Status} " +
             $"durationMs={reclaimResult.DurationMilliseconds} " +
             $"releasedHeapMB={reclaimResult.ReleasedHeapBytes / (1024.0 * 1024):F1} " +
+            $"releasedPrivateMB={reclaimResult.ReleasedPrivateBytes / (1024.0 * 1024):F1} " +
             $"reason={triggerReason}");
 
         // A cooldown or in-progress veto must not consume the deep stage: the
@@ -4018,12 +4107,14 @@ public partial class App : Application
             $"workingSetBeforeMB={before.WorkingSetBytes / (1024.0 * 1024):F1} " +
             $"workingSetAfterMB={after.WorkingSetBytes / (1024.0 * 1024):F1} " +
             $"releasedHeapMB={reclaimResult.ReleasedHeapBytes / (1024.0 * 1024):F1} " +
+            $"releasedPrivateMB={reclaimResult.ReleasedPrivateBytes / (1024.0 * 1024):F1} " +
             $"reason={reason} workingSetTrimmed=false fullViewRebuilds=0");
         PerformanceLogger.Mark(
             "HeavyOperationDeepMemoryCleanupCompleted",
             $"status={reclaimResult.Status} " +
             $"durationMs={reclaimResult.DurationMilliseconds} " +
             $"releasedHeapMB={reclaimResult.ReleasedHeapBytes / (1024.0 * 1024):F1} " +
+            $"releasedPrivateMB={reclaimResult.ReleasedPrivateBytes / (1024.0 * 1024):F1} " +
             $"reason={reason}");
     }
 
@@ -4271,6 +4362,27 @@ public partial class App : Application
         return _searchEngineService;
     }
 
+    /// <summary>
+    /// Stage 3b, cut point 3: reacts to feature enable-state changes raised
+    /// through IFeatureStateEvents. Mirrors the service refreshes that the
+    /// WidgetManager used to call directly via App.Current.
+    /// </summary>
+    private void OnFeatureStateChanged(FeatureStateChangedEventArgs e)
+    {
+        if (e.FeatureId == DeskBoxFeatureIds.Search)
+        {
+            SetSearchFeatureEnabled(e.Enabled);
+        }
+        else if (e.FeatureId == DeskBoxFeatureIds.QuickCapture)
+        {
+            RefreshQuickCaptureClipboardService();
+        }
+        else if (e.FeatureId == DeskBoxFeatureIds.Todo)
+        {
+            RefreshTodoReminderService();
+        }
+    }
+
     internal void SetSearchFeatureEnabled(bool enabled)
     {
         if (!UiDispatcherQueue.HasThreadAccess)
@@ -4481,7 +4593,7 @@ public partial class App : Application
 
     private async Task HandleSearchContentAsync(Models.SearchResultItem item)
     {
-        if (WidgetManager is null)
+        if (WidgetManager is null || TodoReminderPresenter is not { } presenter)
         {
             return;
         }
@@ -4489,7 +4601,7 @@ public partial class App : Application
         switch (item.Kind)
         {
             case Models.SearchResultKind.Todo:
-                await WidgetManager.ShowTodoReminderTargetAsync(
+                await presenter.PresentReminderTargetAsync(
                     item.TodoWidgetId,
                     item.TodoItemId,
                     preferTodayFilter: false);

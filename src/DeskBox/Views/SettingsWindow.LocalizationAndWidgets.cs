@@ -372,7 +372,7 @@ public sealed partial class SettingsWindow
         }
 
         _featureWidgetRows.Clear();
-        FeatureWidgetList.Children.Clear();
+        FeatureWidgetList?.Children.Clear();
     }
 
     private void FeatureWidgetSettingsButton_Click(object sender, RoutedEventArgs e)

@@ -367,6 +367,7 @@ public const int DefaultSearchMaxResults = 100;
                 [nameof(AppSettings.DesktopAutoOrganizationEnabled)] = DefaultPreferencePreservationReason.UserChoice,
                 [nameof(AppSettings.DesktopAutoOrganizationBaselineUtc)] = DefaultPreferencePreservationReason.RuntimeState,
                 [nameof(AppSettings.DefaultManagedStorageRootPath)] = DefaultPreferencePreservationReason.Storage,
+                [nameof(AppSettings.AutomaticBackupDirectory)] = DefaultPreferencePreservationReason.Storage,
                 [nameof(AppSettings.ManagedStorageDesktopShortcutEnabled)] = DefaultPreferencePreservationReason.UserChoice,
                 [nameof(AppSettings.ManagedStorageDesktopShortcutPath)] = DefaultPreferencePreservationReason.SystemIntegration,
                 [nameof(AppSettings.HasCompletedOnboarding)] = DefaultPreferencePreservationReason.RuntimeState,
@@ -433,6 +434,8 @@ public const int DefaultSearchMaxResults = 100;
             PerformanceSettingsPolicy.DefaultTransientWindowReleaseDelaySeconds;
         settings.IdleWorkingSetTrimEnabled =
             PerformanceSettingsPolicy.DefaultIdleWorkingSetTrimEnabled;
+        settings.ImmediateHiddenWorkingSetTrimEnabled =
+            PerformanceSettingsPolicy.DefaultImmediateHiddenWorkingSetTrimEnabled;
         settings.PerformanceCacheBudget =
             PerformanceSettingsPolicy.DefaultCacheBudget;
         settings.EnableContinuousDecorativeAnimations =
@@ -518,6 +521,8 @@ public const int DefaultSearchMaxResults = 100;
         settings.QuickCaptureRecentLimit = QuickCaptureService.DefaultRecentLimit;
         settings.QuickCaptureShowCreatedTime = true;
         settings.QuickCaptureItemPreviewLineCount = DefaultQuickCaptureItemPreviewLineCount;
+        settings.QuickCaptureListTextSize = 0;
+        settings.QuickCaptureContentTextSize = 0;
         settings.QuickCaptureEditorEnterBehavior = EditorEnterBehaviorCtrlEnterSaves;
         settings.QuickCaptureDefaultFormat = QuickCaptureFormatMarkdown;
         settings.QuickCaptureWideLayout = QuickCaptureWideLayoutAuto;
@@ -532,6 +537,8 @@ public const int DefaultSearchMaxResults = 100;
         settings.QuickCaptureShowRecentTab = true;
         settings.TodoShowCompletedTasks = false;
         settings.TodoItemPreviewLineCount = DefaultTodoItemPreviewLineCount;
+        settings.TodoListTextSize = 0;
+        settings.TodoContentTextSize = 0;
         settings.TodoEditorEnterBehavior = EditorEnterBehaviorCtrlEnterSaves;
         settings.TodoShowFooterStats = false;
         settings.TodoShowClearCompletedButton = true;
@@ -600,6 +607,9 @@ settings.WeatherRefreshIntervalMinutes = 60;
         settings.TodoShowImportantTab = true;
         settings.TodoShowCompletedTab = true;
         settings.ManagedDropAction = ManagedDropActionMove;
+        settings.AutomaticBackupEnabled = DataBackupSettingsPolicy.DefaultEnabled;
+        settings.AutomaticBackupIntervalMinutes = DataBackupSettingsPolicy.DefaultIntervalMinutes;
+        settings.AutomaticBackupRetentionCount = DataBackupSettingsPolicy.DefaultRetentionCount;
         settings.GlobalHotkeyEnabled = DefaultGlobalHotkeyEnabled;
         settings.GlobalHotkeyActivationKind = DefaultGlobalHotkeyActivationKind;
         settings.GlobalHotkeyModifiers = DefaultGlobalHotkeyModifiers;
@@ -607,6 +617,7 @@ settings.WeatherRefreshIntervalMinutes = 60;
         settings.DesktopDoubleClickEnabled = false;
         settings.DoubleClickToOpen = true;
         settings.FileWidgetFolderOpenBehavior = FileWidgetFolderOpenBehaviorNames.Explorer;
+        settings.FileItemSystemContextMenuEnabled = false;
         settings.HideShortcutArrowOverlay = true;
         settings.ResizeSnapEnabled = true;
         settings.WidgetSnapSpacing = DefaultWidgetSnapSpacing;
@@ -728,6 +739,7 @@ settings.FocusClickedWidgetOnRaise = false;
                 changed |= NormalizeTodoSettings(_settings);
                 changed |= NormalizeWeatherSettings(_settings);
                 changed |= NormalizeDeletionSettings(_settings);
+                changed |= DataBackupSettingsPolicy.Normalize(_settings);
             }
 
             if (changed)
@@ -821,7 +833,7 @@ settings.FocusClickedWidgetOnRaise = false;
         await _fileWriteLock.WaitAsync();
         try
         {
-            string json;
+            byte[] utf8Json;
             lock (_lock)
             {
                 PerformanceSettingsPolicy.Normalize(_settings);
@@ -837,12 +849,14 @@ settings.FocusClickedWidgetOnRaise = false;
                 NormalizeQuickCaptureSettings(_settings);
                 NormalizeTodoSettings(_settings);
                 NormalizeWeatherSettings(_settings);
-                json = JsonSerializer.Serialize(
+                // Keep the locked snapshot in its on-disk encoding instead of
+                // allocating a large UTF-16 string and encoding it again on save.
+                utf8Json = JsonSerializer.SerializeToUtf8Bytes(
                     _settings,
                     SettingsJsonContext.Default.AppSettings);
             }
 
-            await ResilientJsonStore.SaveAsync(_settingsPath, json);
+            await ResilientJsonStore.SaveAsync(_settingsPath, utf8Json);
             LastPersistenceFailure = null;
             return true;
         }
@@ -1610,6 +1624,19 @@ settings.FocusClickedWidgetOnRaise = false;
             changed = true;
         }
 
+        changed |= NormalizeOptionalTextSize(
+            settings.QuickCaptureListTextSize,
+            value => settings.QuickCaptureListTextSize = value);
+        changed |= NormalizeOptionalTextSize(
+            settings.QuickCaptureContentTextSize,
+            value => settings.QuickCaptureContentTextSize = value);
+        changed |= NormalizeOptionalTextSize(
+            settings.TodoListTextSize,
+            value => settings.TodoListTextSize = value);
+        changed |= NormalizeOptionalTextSize(
+            settings.TodoContentTextSize,
+            value => settings.TodoContentTextSize = value);
+
         double legacyLayoutDensityScale = settings.LayoutDensityScale;
         if (!double.IsFinite(legacyLayoutDensityScale))
         {
@@ -1720,6 +1747,23 @@ settings.FocusClickedWidgetOnRaise = false;
         return double.IsFinite(value)
             ? Math.Clamp(value, MinTextSize, MaxTextSize)
             : DefaultTextSize;
+    }
+
+    private static bool NormalizeOptionalTextSize(double value, Action<double> assign)
+    {
+        if (value <= 0 || !double.IsFinite(value))
+        {
+            return false;
+        }
+
+        double normalized = NormalizeTextSize(value);
+        if (Math.Abs(value - normalized) <= 0.0001)
+        {
+            return false;
+        }
+
+        assign(normalized);
+        return true;
     }
 
     public static string NormalizeMusicDisplayMode(string? mode)

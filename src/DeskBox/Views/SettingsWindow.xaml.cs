@@ -1,8 +1,9 @@
-﻿using DeskBox.Controls;
+using DeskBox.Controls;
 using DeskBox.Helpers;
 using DeskBox.Models;
 using DeskBox.Services;
 using DeskBox.ViewModels;
+using DeskBox.Views.SettingsSections;
 using System.ComponentModel;
 using System.Diagnostics;
 using Microsoft.UI;
@@ -79,12 +80,12 @@ public sealed partial class SettingsWindow : Window
     private bool _isRefreshingHotkeyControls;
     private bool _isRefreshingFeatureWidgetList;
     private bool _isSyncingNavigationSelection;
-    private bool _isSettingsRootLoaded;
     private bool _isSelectingCity;
     private bool _isRefreshingBackupSnapshots;
     private ReleaseNotesWindow? _releaseNotesWindow;
     private string _currentSettingsSection = "General";
-    private IReadOnlyDictionary<string, FrameworkElement> _settingsSectionElements = null!;
+    private readonly Dictionary<string, FrameworkElement> _settingsSectionElements = new(StringComparer.Ordinal);
+    private int _settingsNavigationGeneration;
     private IReadOnlyList<SettingsSearchResult> _settingsSearchResults = Array.Empty<SettingsSearchResult>();
 
     private static readonly IReadOnlyDictionary<string, SettingsSectionRoute> SectionRoutes =
@@ -136,7 +137,8 @@ public sealed partial class SettingsWindow : Window
             long elapsed = constructionStopwatch.ElapsedMilliseconds;
             App.Log(
                 $"[SettingsPerf] Constructor stage={stage} " +
-                $"stageMs={elapsed - previousCheckpointMilliseconds} totalMs={elapsed}");
+                $"stageMs={elapsed - previousCheckpointMilliseconds} totalMs={elapsed} " +
+                $"createdSections={_settingsSectionElements.Count}");
             previousCheckpointMilliseconds = elapsed;
         }
 
@@ -154,12 +156,10 @@ public sealed partial class SettingsWindow : Window
         this.Title = _localizationService.T("Window.Settings.Title");
         
         InitializeSettingsSectionElements();
-        RefreshSettingsSearchResults();
         LogConstructionCheckpoint("section-registry");
 
         SettingsRoot.DataContext = ViewModel;
-        AppearanceDetailSection.ViewModel = ViewModel;
-        CapsuleModeSection.ViewModel = ViewModel;
+        Bindings.Initialize();
         SettingsRoot.AddHandler(
             UIElement.PointerPressedEvent,
             _settingsRootPointerPressedHandler,
@@ -179,7 +179,6 @@ public sealed partial class SettingsWindow : Window
 
         _windowSubclassProc = WindowSubclassProc;
         _hWnd = WindowNative.GetWindowHandle(this);
-        GlanceSettingsSection.SetOwnerWindow(_hWnd);
         var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(_hWnd);
         _appWindow = AppWindow.GetFromWindowId(windowId);
         AppBranding.ApplyWindowIcon(_appWindow);
@@ -266,13 +265,9 @@ public sealed partial class SettingsWindow : Window
         }
 
         RefreshFeatureWidgetList();
-        _ = ViewModel.RefreshQuickAccessStateAsync();
-        ViewModel.RefreshGlobalHotkeyState();
-        _ = ViewModel.RefreshQuickCaptureImageCacheInfoAsync();
-        RefreshGlobalHotkeyControls();
+        RefreshVisibleSettingsPageData();
         UpdateResponsiveLayout(GetWindowWidth());
         ApplyToggleSwitchContentVisibility();
-        RefreshSettingsSearchResults();
     }
 
     private void SettingsRoot_Loaded(object sender, RoutedEventArgs e)
@@ -282,14 +277,9 @@ public sealed partial class SettingsWindow : Window
         long responsiveTreeMilliseconds = stopwatch.ElapsedMilliseconds;
         RefreshFeatureWidgetList();
         long featureWidgetMilliseconds = stopwatch.ElapsedMilliseconds;
-        _ = ViewModel.RefreshQuickAccessStateAsync();
-        ViewModel.RefreshGlobalHotkeyState();
-        _ = ViewModel.RefreshQuickCaptureImageCacheInfoAsync();
-        RefreshGlobalHotkeyControls();
+        RefreshVisibleSettingsPageData();
         UpdateResponsiveLayout(GetWindowWidth());
         ApplyToggleSwitchContentVisibility();
-        _isSettingsRootLoaded = true;
-        RefreshSettingsSearchResults();
         stopwatch.Stop();
         App.Log(
             $"[SettingsPerf] Loaded responsiveTreeMs={responsiveTreeMilliseconds} " +
@@ -334,6 +324,12 @@ public sealed partial class SettingsWindow : Window
         _hotkeyRecordingHook.Dispose();
         ClearSettingsSearchHighlight();
         ClearFeatureSettingsExpanderCallbacks();
+        foreach (FrameworkElement section in _settingsSectionElements.Values)
+        {
+            section.Loaded -= DeferredSettingsSection_Loaded;
+            Microsoft.UI.Xaml.Markup.XamlBindingHelper.GetDataTemplateComponent(section)?.Recycle();
+            section.DataContext = null;
+        }
         Win32Helper.ClearWindowTopMost(_hWnd);
         RemoveMinimumSizeHook();
         _themeService.AppearanceChanged -= OnAppearanceChanged;
@@ -344,19 +340,24 @@ public sealed partial class SettingsWindow : Window
             hotkeyService.RegistrationChanged -= OnGlobalHotkeyRegistrationChanged;
         }
 
-        AppearanceDetailSection.ViewModel = null;
-        CapsuleModeSection.ViewModel = null;
+        if (AppearanceDetailSection is not null)
+        {
+            AppearanceDetailSection.ViewModel = null;
+        }
+        if (CapsuleModeSection is not null)
+        {
+            CapsuleModeSection.ViewModel = null;
+        }
         Bindings.StopTracking();
         Localized.UntrackTree(SettingsRoot);
         SettingsRoot.DataContext = null;
         _releaseNotesWindow?.Close();
         _releaseNotesWindow = null;
         ClearFeatureWidgetRows();
-        ManagedStorageFolderList.Children.Clear();
+        ManagedStorageFolderList?.Children.Clear();
         ViewModel.Dispose();
         _settingsSearchResults = Array.Empty<SettingsSearchResult>();
-        _settingsSectionElements =
-            new Dictionary<string, FrameworkElement>(StringComparer.Ordinal);
+        _settingsSectionElements.Clear();
         _settingRows.Clear();
         _metricRows.Clear();
         _pressedAppearanceSliders.Clear();
@@ -500,31 +501,40 @@ public sealed partial class SettingsWindow : Window
 
         ContentHost.Width = Math.Min(ContentMaxWidth, availableContentWidth);
         ContentHost.MaxWidth = ContentMaxWidth;
-        PathActionsPanel.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
-        PathActionsPanel.Orientation = isNarrow ? Orientation.Vertical : Orientation.Horizontal;
-        OpenPathButton.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
-        PinQuickAccessButton.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
-        ChangePathButton.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
-        CleanupStorageButton.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
-        Grid.SetRow(AboutRightPanel, isNarrow ? 1 : 0);
-        Grid.SetColumn(AboutRightPanel, isNarrow ? 0 : 2);
-        Grid.SetColumnSpan(AboutRightPanel, isNarrow ? 3 : 1);
-        AboutRightPanel.Margin = isNarrow ? new Thickness(0, 10, 0, 0) : new Thickness(0);
-        AboutRightPanel.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
-        AboutInfoActionsPanel.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
-        AboutInfoActionsPanel.Orientation = isNarrow ? Orientation.Vertical : Orientation.Horizontal;
-        AboutMeButton.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
-        AboutWebsiteButton.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
-        FeedbackEmailButton.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
-        StoreSupportButton.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
-        UpdateActionsPanel.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
-        UpdateActionsPanel.Orientation = isNarrow ? Orientation.Vertical : Orientation.Horizontal;
-        OneClickUpdateButton.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
-        ViewReleaseNotesButton.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
-        OpenManualUpdateDownloadButton.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
-        GlobalHotkeyActionsPanel.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
-        GlobalHotkeyCaptureButton.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
-        ResetGlobalHotkeyButton.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
+        if (PathActionsPanel is not null)
+        {
+            PathActionsPanel.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
+            PathActionsPanel.Orientation = isNarrow ? Orientation.Vertical : Orientation.Horizontal;
+            OpenPathButton.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
+            PinQuickAccessButton.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
+            ChangePathButton.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
+            CleanupStorageButton.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
+        }
+        if (AboutRightPanel is not null)
+        {
+            Grid.SetRow(AboutRightPanel, isNarrow ? 1 : 0);
+            Grid.SetColumn(AboutRightPanel, isNarrow ? 0 : 2);
+            Grid.SetColumnSpan(AboutRightPanel, isNarrow ? 3 : 1);
+            AboutRightPanel.Margin = isNarrow ? new Thickness(0, 10, 0, 0) : new Thickness(0);
+            AboutRightPanel.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
+            AboutInfoActionsPanel.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
+            AboutInfoActionsPanel.Orientation = isNarrow ? Orientation.Vertical : Orientation.Horizontal;
+            AboutMeButton.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
+            AboutWebsiteButton.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
+            FeedbackEmailButton.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
+            StoreSupportButton.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
+            UpdateActionsPanel.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
+            UpdateActionsPanel.Orientation = isNarrow ? Orientation.Vertical : Orientation.Horizontal;
+            OneClickUpdateButton.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
+            ViewReleaseNotesButton.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
+            OpenManualUpdateDownloadButton.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
+        }
+        if (GlobalHotkeyActionsPanel is not null)
+        {
+            GlobalHotkeyActionsPanel.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
+            GlobalHotkeyCaptureButton.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
+            ResetGlobalHotkeyButton.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
+        }
 
         foreach (var row in _settingRows)
         {
@@ -772,9 +782,10 @@ public sealed partial class SettingsWindow : Window
         string Title,
         string Breadcrumb,
         string Description,
-        FrameworkElement? TargetElement)
+        string? TargetSectionTag,
+        string? TargetHeaderKey)
     {
-        public bool IsPage => TargetElement is null;
+        public bool IsPage => TargetHeaderKey is null;
 
         public override string ToString()
         {

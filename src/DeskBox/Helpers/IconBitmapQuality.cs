@@ -3,8 +3,8 @@ namespace DeskBox.Helpers;
 /// <summary>
 /// Shared heuristics for identifying a Shell icon that is technically valid but
 /// is only a small glyph centered inside a much larger transparent canvas.
-/// This is intentionally conservative: it is used only for shortcut icons and
-/// must not reject ordinary application artwork or media thumbnails.
+/// This is intentionally conservative: it is used for Shell-item icons, never
+/// media thumbnails, and must not reject ordinary application artwork.
 /// </summary>
 internal static class IconBitmapQuality
 {

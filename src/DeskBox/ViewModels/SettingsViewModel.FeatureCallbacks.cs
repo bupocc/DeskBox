@@ -305,6 +305,7 @@ public partial class SettingsViewModel
         }
 
         _settingsService.Settings.MusicUseArtworkBackdrop = value;
+        _musicSettingsStore.Update(store => store.UseArtworkBackdrop = value);
         _settingsService.SaveDebounced();
     }
 
@@ -316,6 +317,7 @@ public partial class SettingsViewModel
         }
 
         _settingsService.Settings.MusicEnableCoverHoverMotion = value;
+        _musicSettingsStore.Update(store => store.EnableCoverHoverMotion = value);
         _settingsService.SaveDebounced();
     }
 
