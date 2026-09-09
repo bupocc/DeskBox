@@ -1,4 +1,5 @@
-﻿﻿using DeskBox.Models;
+﻿﻿using DeskBox.Contracts;
+using DeskBox.Models;
 using DeskBox.Helpers;
 using DeskBox.Controls.WidgetContents;
 using DeskBox.ViewModels;
@@ -13,11 +14,6 @@ public sealed record ManagedStorageMigrationResult(
     int AffectedWidgetCount,
     string OldRootPath,
     string NewRootPath);
-
-public sealed record QuickCaptureFileWidgetTarget(
-    string WidgetId,
-    string Name,
-    string FolderPath);
 
 public enum WidgetRemovalAction
 {
@@ -105,9 +101,16 @@ internal interface IDesktopWidgetWindow
 }
 
 /// <summary>
-/// Manages the lifecycle of all desktop organizer widgets.
+/// Manages the lifecycle of all desktop organizer widgets. Implements the
+/// stage 3b host-internal capability ports (pluginization roadmap stage 3)
+/// while their implementations still live here - callers depend on the
+/// Contracts interfaces, physical extraction is deferred until the
+/// dependency set is stable.
 /// </summary>
-public sealed partial class WidgetManager
+public sealed partial class WidgetManager :
+    ITodoReminderPresenter,
+    IFileWidgetImportTarget,
+    IFeatureStateEvents
 {
     private const string ManagedShortcutDescriptionPrefix = "DeskBox mapped widget shortcut:";
 
@@ -217,6 +220,8 @@ public sealed partial class WidgetManager
             _lastNativeWidgetVisibilityForMemoryCleanup.Value !=
                 hasNativeVisibleWidgets;
         _lastNativeWidgetVisibilityForMemoryCleanup = hasNativeVisibleWidgets;
+
+        App.Current.ObserveWidgetVisibilityForImmediateWorkingSetTrim(visibility, reason);
 
         if (!stateChanged &&
             !(forceScheduleWhenHidden && !hasNativeVisibleWidgets))
@@ -549,7 +554,12 @@ public sealed partial class WidgetManager
                 WidgetKind.Glance,
                 CreateOrShowGlanceWidgetsAsync,
                 SetGlanceFeatureWidgetEnabledAsync,
-                () => CloseLoadedFeatureWidgetWindows(WidgetKind.Glance))
+                () => CloseLoadedFeatureWidgetWindows(WidgetKind.Glance)),
+            new(
+                WidgetKind.Pomodoro,
+                async _ => await CreateSingletonContentFeatureWidgetAsync(WidgetKind.Pomodoro),
+                SetPomodoroFeatureWidgetEnabledAsync,
+                () => HideAndCloseFeatureWidgetAsync(WidgetKind.Pomodoro))
         ];
 
         return handlers.ToDictionary(handler => handler.WidgetKind);
@@ -609,6 +619,14 @@ public sealed partial class WidgetManager
                     request.CancellationToken)),
             new(
                 WidgetKind.Glance,
+                async request => await CreateContentWidgetFromConfigAsync(
+                    request.Config,
+                    request.KeepPreparedForAnimation,
+                    request.RevealAfterCreate,
+                    request.ShowRaisedWhileInitializing,
+                    request.CancellationToken)),
+            new(
+                WidgetKind.Pomodoro,
                 async request => await CreateContentWidgetFromConfigAsync(
                     request.Config,
                     request.KeepPreparedForAnimation,
@@ -975,7 +993,9 @@ public sealed partial class WidgetManager
     public async Task CreateFolderWidgetAsync(string folderPath)
     {
         string normalizedPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folderPath));
-        EnsureFileWidgetPathAvailable(normalizedPath);
+        EnsureFileWidgetPathAvailable(
+            normalizedPath,
+            candidateFollowsDefaultStoragePath: false);
 
         string folderName = Path.GetFileName(normalizedPath);
         if (string.IsNullOrWhiteSpace(folderName))
@@ -1001,15 +1021,34 @@ public sealed partial class WidgetManager
         await CreateWidgetFromConfigAsync(config, revealAfterCreate: true);
     }
 
-    public void EnsureFileWidgetPathAvailable(string folderPath, string? excludedWidgetId = null)
+    public void EnsureFileWidgetPathAvailable(
+        string folderPath,
+        string? excludedWidgetId = null,
+        bool candidateFollowsDefaultStoragePath = false)
     {
         string normalizedPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folderPath));
+        if (!candidateFollowsDefaultStoragePath)
+        {
+            string managedStorageRoot =
+                SettingsService.NormalizeManagedStorageRootPath(
+                    _settingsService.Settings.DefaultManagedStorageRootPath);
+            if (FileService.PathsOverlap(normalizedPath, managedStorageRoot))
+            {
+                throw new InvalidOperationException(_localizationService.Format(
+                    "Widget.Error.FileWidgetPathConflict",
+                    _localizationService.T("WidgetTitleIcon.Label.ManagedStorage")));
+            }
+        }
+
         WidgetConfig? conflict = _settingsService.Settings.Widgets.FirstOrDefault(widget =>
             widget.WidgetKind == WidgetKind.File &&
             !IsDeleted(widget.Id) &&
             !string.Equals(widget.Id, excludedWidgetId, StringComparison.Ordinal) &&
             !string.IsNullOrWhiteSpace(widget.MappedFolderPath) &&
-            FileService.PathsOverlap(normalizedPath, widget.MappedFolderPath));
+            IsFileWidgetPathConflict(
+                normalizedPath,
+                candidateFollowsDefaultStoragePath,
+                widget));
 
         if (conflict is null)
         {
@@ -1019,6 +1058,49 @@ public sealed partial class WidgetManager
         throw new InvalidOperationException(_localizationService.Format(
             "Widget.Error.FileWidgetPathConflict",
             conflict.Name));
+    }
+
+    internal static bool IsFileWidgetPathConflict(
+        string candidatePath,
+        bool candidateFollowsDefaultStoragePath,
+        WidgetConfig existingWidget)
+    {
+        if (string.IsNullOrWhiteSpace(existingWidget.MappedFolderPath))
+        {
+            return false;
+        }
+
+        if (!FileService.TryIsPathUnderDirectoryResolved(
+                candidatePath,
+                existingWidget.MappedFolderPath,
+                out bool candidateUnderExisting) ||
+            !FileService.TryIsPathUnderDirectoryResolved(
+                existingWidget.MappedFolderPath,
+                candidatePath,
+                out bool existingUnderCandidate))
+        {
+            // Mapping aliases that cannot be resolved safely must not bypass
+            // exact-path or managed-storage isolation.
+            return true;
+        }
+
+        if (!candidateUnderExisting && !existingUnderCandidate)
+        {
+            return false;
+        }
+
+        if (candidateUnderExisting && existingUnderCandidate)
+        {
+            // Two logical aliases for the same physical directory still
+            // represent one storage surface and remain forbidden.
+            return true;
+        }
+
+        // Strict parent/child mappings are supported only when both widgets
+        // are external mappings. Managed storage keeps exclusive ownership of
+        // its tree so migration and cleanup cannot touch an overlapping widget.
+        return candidateFollowsDefaultStoragePath ||
+               existingWidget.FollowsDefaultStoragePath;
     }
 
     /// <summary>
@@ -1564,6 +1646,20 @@ public sealed partial class WidgetManager
                 if (!hasRemainingGlanceWidget)
                 {
                     SetFeatureWidgetEnabledState(WidgetKind.Glance, false);
+                }
+            }
+            else if (config.WidgetKind == WidgetKind.Todo)
+            {
+                // Todo widgets can coexist; deleting one removes its store and
+                // attachments, and only disables the feature when the last
+                // instance goes away (mirroring the Glance branch above).
+                await TodoWidgetStore.DeleteForWidgetAsync(config.Id);
+                bool hasRemainingTodoWidget = _settingsService.Settings.Widgets.Any(widget =>
+                    widget.WidgetKind == WidgetKind.Todo &&
+                    !IsDeleted(widget.Id));
+                if (!hasRemainingTodoWidget)
+                {
+                    SetFeatureWidgetEnabledState(WidgetKind.Todo, false);
                 }
             }
             else
@@ -2161,6 +2257,7 @@ public sealed partial class WidgetManager
             WidgetKind.Music => (380, 190),
             WidgetKind.Weather => (200, 200),
             WidgetKind.Glance => (360, 260),
+            WidgetKind.Pomodoro => (300, 330),
             _ => (
                 _settingsService.Settings.DefaultWidgetWidth,
                 _settingsService.Settings.DefaultWidgetHeight)

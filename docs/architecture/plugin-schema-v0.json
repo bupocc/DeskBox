@@ -1,0 +1,310 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deskbox.fun/schemas/plugin-manifest-v0.json",
+  "title": "DeskBox Plugin Manifest (schema v0.3 draft)",
+  "description": "Draft manifest vocabulary for the DeskBox extension system. v0.1 incorporated the third review round (contributions[] replaces widgets[]; runtime describes execution technology; the signature block avoids self-reference). v0.2 incorporated the fourth round (widget contributions must be complete; signature blocks must be complete; packages carry the Ed25519 publisherPublicKey; hashing is pinned to JCS + a package.integrity manifest). v0.3 adds the declarative execution vocabulary (round 6): dataSources (http-json fetched by the HOST under the network.fetch permission), bindings (JSON-path overrides of payload fields), and actions (open-url under the shell.open permission) - runtime:none packages execute no third-party code, but the host executes governed capabilities on their behalf. Design decisions: roadmap sections 13.2, 13.4, 13.5, 14, 15, 16.7 and 16.10.",
+  "type": "object",
+  "required": ["schemaVersion", "id", "version", "publisher", "publisherPublicKey", "runtime", "hostApi", "contributions"],
+  "allOf": [
+    {
+      "if": { "properties": { "runtime": { "const": "native" } } },
+      "then": {
+        "properties": {
+          "contributions": {
+            "items": { "$ref": "#/$defs/nativeWidgetContribution" }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "runtime": { "not": { "const": "native" } } } },
+      "then": {
+        "properties": {
+          "contributions": {
+            "items": { "$ref": "#/$defs/templatedWidgetContribution" }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "nativeWidgetContribution": {
+      "type": "object",
+      "required": ["type", "id", "displayName"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "widget" },
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "displayName": { "type": "string", "minLength": 1 },
+        "template": false,
+        "fallback": {
+          "type": "object",
+          "required": ["template", "message"],
+          "properties": {
+            "template": { "const": "status" },
+            "message": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false,
+          "description": "What the host renders when the native runtime is unavailable."
+        },
+        "payload": true,
+        "bindings": true,
+        "defaultSize": true,
+        "activationEvents": true
+      }
+    },
+    "templatedWidgetContribution": {
+      "type": "object",
+      "required": ["type", "id", "displayName", "template"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "widget" },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "description": "Local contribution id, unique within the package (e.g. 'overview'). The host derives the canonical contribution id as {package-id}/{local-id} (e.g. com.github.stats/overview). This is distinct from the package id and from runtime widget instance ids (three-level separation)."
+        },
+        "displayName": { "type": "string", "minLength": 1 },
+        "template": {
+          "enum": ["metric", "list", "status", "gallery", "action-list", "simple-form"],
+          "description": "Host-rendered declarative template (roadmap 13.5). Required for runtime:none/wasm/process; optional for runtime:native (native packages render via their own DLL, not via host templates)."
+        },
+        "fallback": {
+          "type": "object",
+          "required": ["template"],
+          "properties": {
+            "template": { "enum": ["status"] },
+            "message": { "type": "string" }
+          },
+          "additionalProperties": false,
+          "description": "Declarative fallback for native packages: what the host renders when the native runtime is unavailable (package missing, wrong architecture, restart required, load failure). Only meaningful for runtime:native."
+        },
+        "payload": {
+          "type": "object",
+          "required": ["version"],
+          "properties": {
+            "version": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Payload schema version; the host picks the parser by version, strict within a known version, unknown elements fall back per-element then drop."
+            }
+          },
+          "additionalProperties": true,
+          "description": "Template payload data. Payload fields are the static/fallback values; bindings override them with live data. HostConfig owns theming; the payload never carries style."
+        },
+        "bindings": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/fieldBinding" },
+          "description": "Live-data overrides for payload fields (keys are payload field names). Minimal v0.3 semantics: JSON path into an http-json data source; a failed fetch or missing path keeps the payload fallback value (per-element fallback, roadmap 13.5)."
+        },
+        "defaultSize": {
+          "type": "object",
+          "properties": { "width": { "type": "integer", "minimum": 1, "maximum": 2147483647 }, "height": { "type": "integer", "minimum": 1, "maximum": 2147483647 } },
+          "additionalProperties": false
+        },
+        "activationEvents": {
+          "type": "array",
+          "items": {
+            "enum": ["onStartupFinished", "onWidgetOpen", "onCommand", "onSchedule", "onFileAssociation", "onEvent"]
+          },
+          "description": "Declarative activation events (roadmap 5.8): widgets restore their window/layout always; these decide when the plugin runtime starts."
+        }
+      }
+    },
+    "fieldBinding": {
+      "type": "object",
+      "required": ["source", "path"],
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Id of a root-level dataSources entry."
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^\\$\\.[A-Za-z0-9_]+(?:\\[[0-9]+\\])*(?:\\.[A-Za-z0-9_]+(?:\\[[0-9]+\\])*)*$",
+          "maxLength": 512,
+          "description": "Minimal JSON path into the data source response, e.g. $.stargazers_count or $.items[0].name. A missing path keeps the payload fallback value."
+        }
+      }
+    },
+    "dataSource": {
+      "type": "object",
+      "required": ["type", "url", "refreshSeconds"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "http-json" },
+        "url": {
+          "type": "string",
+          "pattern": "^https://",
+          "description": "HTTPS-only: a declarative fetcher must not be redirectable over plaintext. The HOST performs the fetch; the URL host must fall inside a granted network.fetch scope (checked at install time and again at runtime)."
+        },
+        "refreshSeconds": {
+          "type": "integer",
+          "minimum": 10,
+          "description": "Minimum refresh interval; the host may stretch it (its scheduler owns the actual cadence)."
+        }
+      }
+    },
+    "packageAction": {
+      "type": "object",
+      "required": ["type", "url"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "open-url" },
+        "url": {
+          "type": "string",
+          "pattern": "^https://",
+          "description": "Literal HTTPS URL for v0.3 (no templating yet). Executed host-side via the shell open; requires a granted shell.open permission whose scope covers the URL host - declarative does not mean harmless (roadmap 14)."
+        }
+      }
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "const": 0,
+      "description": "Manifest schema version. Unknown future versions must be rejected at install time (install-gate), not silently tolerated."
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*(\\.[a-z0-9][a-z0-9-]*)+$",
+      "description": "Package id, reverse-DNS style (e.g. com.github.stats)."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "maxLength": 32,
+      "description": "Three decimal version components, each at most 2147483647. New content must increase the version; identical content may be reinstalled to repair damaged files."
+    },
+    "publisher": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Publisher identity: the lowercase-hex SHA-256 of the RAW 32-byte Ed25519 public key (base64-decode publisherPublicKey first, then hash the decoded bytes - not the base64 text). Derivable, kept as the pinning/trust-display handle. In the account phase this additionally binds to a registered account."
+    },
+    "publisherPublicKey": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Ed25519 public key, base64 of the raw 32-byte key. Verification material for signature.publisherSignature: a fingerprint alone cannot verify a signature, so the pre-account package carries the key itself (review option A). Validation must check publisher == sha256(raw key bytes) as lowercase hex."
+    },
+    "runtime": {
+      "enum": ["none", "wasm", "process", "native"],
+      "description": "Execution technology for this package. none = declarative-only (resource-pack class; no code executes). wasm = sandboxed component (in-process, WIT-based). process = full-trust executable (requires Windows code signing, L1 store review, Store/WinGet channel). native = DeskBox official trusted first-party NativeAOT DLL (in-process, full-trust, C ABI v2; only official publishers may declare runtime:native - third-party packages with runtime:native are rejected at install). A package has exactly one runtime; its declarative contributions (UI etc.) are always host-rendered regardless of runtime."
+    },
+    "hostApi": {
+      "type": "object",
+      "required": ["min", "max"],
+      "additionalProperties": false,
+      "properties": {
+        "min": { "type": "string", "description": "Minimum host API version (install gate)." },
+        "max": { "type": "string", "description": "Maximum tested host API version; hosts above this may refuse or warn." }
+      },
+      "description": "Install-time half of the version double-gate; the runtime handshake protocolVersion is the other half (roadmap 13.4)."
+    },
+    "contributions": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Things this package contributes to the host. Each entry has a type discriminator; v0.2 defines only the widget type under $defs - command, ai-tool, settings and other types will be added as further $defs entries without changing the package-level structure.",
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/nativeWidgetContribution" },
+          { "$ref": "#/$defs/templatedWidgetContribution" }
+        ]
+      }
+    },
+    "permissions": {
+      "type": "array",
+      "description": "REQUESTED permissions (v0.3 round-7 clarification): the manifest never grants anything - grants are the host's install-time decision and live host-side; the runtime gate checks requested AND url-in-scope AND granted. Each id appears at most once per package (multiple hosts go inside one scope.allow) so grant/scope lookup is never implementation-defined.",
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]+(\\.[a-z0-9-]+)+$",
+            "description": "Permission identifier referencing the host's permission registry (e.g. network.fetch, files.read). Third-party packages cannot invent new permission ids; unknown ids are rejected at validation time."
+          },
+          "required": {
+            "type": "boolean",
+            "default": true,
+            "description": "Whether the package needs this permission to function. Optional permissions can be declined by the user at install."
+          },
+          "scope": {
+            "type": "object",
+            "properties": {
+              "allow": { "type": "array", "items": { "type": "string" }, "description": "e.g. directory globs (Downloads/**), URL hosts (api.github.com), quotas (100/day). v0.3: exact-host allow lists only." }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "default": [],
+      "description": "Permission requests. The host policy engine (not the package) decides whether a permission is auto-granted, prompted, or denied - a package cannot self-grant via manifest fields."
+    },
+    "data": {
+      "type": "object",
+      "properties": {
+        "settingsSchemaVersion": { "type": "integer", "minimum": 1 },
+        "dataSchemaVersion": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false,
+      "description": "Plugin-declared schema versions; the host runs backup -> migrate -> verify -> commit/rollback on updates (roadmap section 9 plugin schema migration clause)."
+    },
+    "signature": {
+      "type": "object",
+      "required": ["contentHash", "publisherSignature"],
+      "description": "OPTIONAL in dev mode; REQUIRED for store-distributed packages. When present it must be complete: contentHash + publisherSignature are both required. The contentHash is the SHA-256 of package.integrity (see contentHash). The publisherSignature is the Ed25519 signature over the RAW 32-byte contentHash digest (not the hex string), verified with the top-level publisherPublicKey. Full-trust executables additionally require Windows code signing (tier 3) and ship through Store/WinGet channels.",
+      "properties": {
+        "contentHash": {
+          "type": "string",
+          "description": "SHA-256 of the package.integrity file bytes, stored as lowercase hex. package.integrity lists every package payload file plus manifest.json (participating as its JCS/RFC 8785 canonicalization with the signature field set to null, which keeps the hash domain free of self-reference without inventing an ad-hoc sorted-keys rule - number formatting, escapes, and nested key order are all pinned by JCS). package.integrity itself is NEVER listed in package.integrity: its own integrity is covered transitively, because contentHash hashes it and the publisher signature covers contentHash. Each line is '<sha256-lowercase-hex>  <path>' (digest, exactly two spaces, forward-slash relative path), lines LF-terminated and ordinal-sorted by path."
+        },
+        "publisherSignature": {
+          "type": "string",
+          "description": "Ed25519 signature over the raw 32-byte contentHash digest (not the hex string), made with the publisher's private key, base64-encoded. Verified with the top-level publisherPublicKey; the publisher field must equal the lowercase-hex SHA-256 of the raw public key bytes."
+        }
+      },
+      "additionalProperties": false
+    },
+    "dataSources": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "Data source ids use the same local-id pattern as contributions." },
+      "additionalProperties": { "$ref": "#/$defs/dataSource" },
+      "description": "Named data sources the HOST fetches on the package's behalf (v0.3: http-json only). Every http-json source consumes the network.fetch permission: REQUESTED here, granted only by the host's install-time decision - the runtime checks requested AND in-scope AND granted. Redirects are refused (not followed) so a 3xx can never move a request to a host that never passed the gate; responses are capped by a host hard limit the package cannot raise."
+    },
+    "actions": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "Action ids use the same local-id pattern as contributions." },
+      "additionalProperties": { "$ref": "#/$defs/packageAction" },
+      "description": "Package-scoped actions referenced by payload actionIds and payload.primaryActionId (v0.3: open-url only). Every action consumes the shell.open permission (requested here, granted host-side). When the actions map is present, payload action references must resolve to it."
+    },
+    "entry": {
+      "type": "object",
+      "required": ["main"],
+      "additionalProperties": false,
+      "properties": {
+        "main": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path to the runtime entry artifact inside the package. process: script path (plugin/main.mjs). wasm: module path. native: the NativeAOT DLL file name (e.g. package.dll) - must be an integrity-listed payload file and must resolve via the package path grammar. Required for runtime wasm/process/native; forbidden for runtime:none."
+        },
+        "architecture": {
+          "enum": ["x64", "arm64"],
+          "description": "CPU architecture of the native DLL. Required for runtime:native; the verifier cross-checks the manifest claim against the PE machine header of the entry DLL. Install refuses when the manifest architecture does not match the running host."
+        }
+      },
+      "description": "Runtime entry point for code-bearing packages. runtime:none packages have no entry."
+    },
+    "fallback": {
+      "type": "object",
+      "properties": {
+        "unknownElement": { "enum": ["fallback", "drop", "reject"], "default": "drop" },
+        "missingTemplate": { "enum": ["placeholder", "reject"], "default": "placeholder" }
+      },
+      "additionalProperties": false,
+      "description": "UI payload degradation policy per roadmap 13.5 layer split: manifest strict / RPC envelope lenient / payload versioned-strict with per-element fallback."
+    }
+  }
+}

@@ -55,8 +55,12 @@ public sealed class ShellThumbnailProxyContractTests
 
         Assert.Contains("SIIGBF_THUMBNAILONLY", source, StringComparison.Ordinal);
         Assert.Contains("SIIGBF_ICONONLY", source, StringComparison.Ordinal);
+        Assert.Contains("SHGFI_ADDOVERLAYS", source, StringComparison.Ordinal);
         Assert.Contains("--icon-only", source, StringComparison.Ordinal);
+        Assert.Contains("--icon-with-overlays", source, StringComparison.Ordinal);
         Assert.Contains("IShellItemImageFactory", source, StringComparison.Ordinal);
+        Assert.Contains("if !path.exists()", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("if !path.is_file()", source, StringComparison.Ordinal);
         Assert.Contains("BITMAP_V5_HEADER_SIZE", source, StringComparison.Ordinal);
         Assert.Contains("0xFF00_0000", source, StringComparison.Ordinal);
         Assert.Contains("empty transparent bitmap", source, StringComparison.Ordinal);
@@ -112,36 +116,73 @@ public sealed class ShellThumbnailProxyContractTests
                 "shell:RecycleBinFolder",
                 "DeskBox issue 119 regression");
 
-            string proxyPath = GetBuiltProxyPath();
-            Assert.True(File.Exists(proxyPath), $"Proxy not found: {proxyPath}");
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = proxyPath,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            };
-            startInfo.ArgumentList.Add("--icon-only");
-            startInfo.ArgumentList.Add(shortcutPath);
-            startInfo.ArgumentList.Add("64");
-
-            using var process = Process.Start(startInfo);
-            Assert.NotNull(process);
-            using var output = new MemoryStream();
-            Task outputTask = process.StandardOutput.BaseStream.CopyToAsync(output);
-            Task<string> errorTask = process.StandardError.ReadToEndAsync();
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            await process.WaitForExitAsync(timeout.Token);
-            await outputTask;
-            string error = await errorTask;
-
+            byte[] output = await RunIconProxyAsync(shortcutPath, 64);
             Assert.True(
-                process.ExitCode == 0,
-                $"Icon-only proxy failed with {process.ExitCode}: {error}");
-            Assert.True(
-                ShellThumbnailProxy.IsVisibleBitmapPayload(output.ToArray()),
+                ShellThumbnailProxy.IsVisibleBitmapPayload(output),
                 "Icon-only proxy returned an empty or transparent bitmap.");
+        }
+        finally
+        {
+            Directory.Delete(temporaryDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task IconOnlyProxy_ReturnsVisiblePixelsForFolder()
+    {
+        string temporaryDirectory = Path.Combine(
+            Path.GetTempPath(),
+            $"DeskBox-folder-icon-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temporaryDirectory);
+        try
+        {
+            byte[] output = await RunIconProxyAsync(
+                temporaryDirectory,
+                256);
+            Assert.True(
+                ShellThumbnailProxy.IsVisibleBitmapPayload(output),
+                "Folder icon proxy returned an empty or transparent bitmap.");
+        }
+        finally
+        {
+            Directory.Delete(temporaryDirectory, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task IconProxy_ReturnsVisiblePixelsForInternetShortcut(
+        bool includeOverlays)
+    {
+        string temporaryDirectory = Path.Combine(
+            Path.GetTempPath(),
+            $"DeskBox-url-icon-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temporaryDirectory);
+        try
+        {
+            string shortcutPath = Path.Combine(
+                temporaryDirectory,
+                "Steam game.url");
+            string shellIconPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+                "System32",
+                "shell32.dll");
+            await File.WriteAllTextAsync(
+                shortcutPath,
+                $"[InternetShortcut]\n" +
+                $"URL=steam://rungameid/123\n" +
+                $"IconFile={shellIconPath}\n" +
+                $"IconIndex=0\n");
+
+            byte[] output = await RunIconProxyAsync(
+                shortcutPath,
+                256,
+                includeOverlays);
+            Assert.True(
+                ShellThumbnailProxy.IsVisibleBitmapPayload(output),
+                $"Internet shortcut proxy returned a blank icon " +
+                $"(includeOverlays={includeOverlays}).");
         }
         finally
         {
@@ -232,6 +273,43 @@ public sealed class ShellThumbnailProxyContractTests
                 ? "win-arm64"
                 : "win-x64",
             ShellThumbnailProxy.ExecutableName));
+    }
+
+    private static async Task<byte[]> RunIconProxyAsync(
+        string path,
+        int requestedSize,
+        bool includeOverlays = false)
+    {
+        string proxyPath = GetBuiltProxyPath();
+        Assert.True(File.Exists(proxyPath), $"Proxy not found: {proxyPath}");
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = proxyPath,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        startInfo.ArgumentList.Add(
+            includeOverlays ? "--icon-with-overlays" : "--icon-only");
+        startInfo.ArgumentList.Add(path);
+        startInfo.ArgumentList.Add(requestedSize.ToString(
+            System.Globalization.CultureInfo.InvariantCulture));
+
+        using var process = Process.Start(startInfo);
+        Assert.NotNull(process);
+        using var output = new MemoryStream();
+        Task outputTask = process.StandardOutput.BaseStream.CopyToAsync(output);
+        Task<string> errorTask = process.StandardError.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await process.WaitForExitAsync(timeout.Token);
+        await outputTask;
+        string error = await errorTask;
+
+        Assert.True(
+            process.ExitCode == 0,
+            $"Icon-only proxy failed with {process.ExitCode}: {error}");
+        return output.ToArray();
     }
 
     private static byte[] CreateBitmapPayload(byte alpha)

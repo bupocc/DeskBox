@@ -46,6 +46,8 @@ public static class IconHelper
         TimeSpan.FromMilliseconds(2500);
     private static readonly TimeSpan IdleCacheMinimumAge =
         TimeSpan.FromMinutes(5);
+    private const int PreferredShellItemIconSize = 256;
+    private const string InternetShortcutIconStrategyVersion = "url-shell-v2";
 
     // Icon bytes cache: path → PNG bytes (for shell icons, not image thumbnails)
     private static readonly ConcurrentDictionary<string, byte[]?> s_iconBytesCache = new(StringComparer.OrdinalIgnoreCase);
@@ -82,6 +84,7 @@ public static class IconHelper
     }
 
     private static readonly SemaphoreSlim s_thumbLoadSemaphore = new(2, 2);
+    private static readonly SemaphoreSlim s_shellIconLoadSemaphore = new(8, 8);
     private static readonly BoundedBackgroundWorkScheduler s_iconSourceScheduler =
         BoundedBackgroundWorkScheduler.SharedShell;
     private static readonly ConcurrentDictionary<string, long> s_iconSourceTimeouts =
@@ -253,6 +256,8 @@ public static class IconHelper
         string cacheKey = resolvedIconSource.CacheKey;
         TouchCachedIconBytes(cacheKey);
         bool isShortcutPath = ShortcutHelper.IsShortcutPath(path);
+        bool isInternetShortcutPath =
+            ShortcutHelper.IsInternetShortcutPath(path);
         int normalizedDecodePixelWidth = Math.Clamp(decodePixelWidth, 0, 256);
         string bitmapCacheKey = $"{normalizedCacheScope}|{cacheKey}:decode={normalizedDecodePixelWidth}";
         Task<BitmapImage?> bitmapTask;
@@ -273,6 +278,7 @@ public static class IconHelper
                     NormalizeSourcePath(path),
                     hideShortcutArrowOverlay,
                     isShortcutPath,
+                    isInternetShortcutPath,
                     normalizedDecodePixelWidth));
         }
         TrackDecodedBitmap(
@@ -681,7 +687,8 @@ public static class IconHelper
     public static void ClearIconCache(
         string path,
         bool hideShortcutArrowOverlay = false,
-        bool showImageFilesAsIcons = false)
+        bool showImageFilesAsIcons = false,
+        bool resetTransientFailures = true)
     {
         if (string.IsNullOrWhiteSpace(path))
         {
@@ -703,7 +710,10 @@ public static class IconHelper
             }
             PerformanceLogger.ThumbnailCacheCount = s_thumbCache.Count;
         }
-        ShellThumbnailProxy.Invalidate(path);
+        if (resetTransientFailures)
+        {
+            ShellThumbnailProxy.Invalidate(path);
+        }
 
         if (IsMediaFile(path))
         {
@@ -716,7 +726,8 @@ public static class IconHelper
         // Never resolve a shortcut or probe its target while invalidating from
         // the UI thread. Every icon key carries its original source path, so all
         // resolved variants can be removed without filesystem or Shell calls.
-        if (ShortcutHelper.IsShortcutPath(path))
+        if (resetTransientFailures &&
+            ShortcutHelper.IsShortcutPath(path))
         {
             // A shortcut can be replaced in-place while retaining the same
             // path. Drop the stored metadata snapshot so the next icon load
@@ -749,15 +760,21 @@ public static class IconHelper
 
         RemoveCachedIconBytes(extensionCacheKey, out _);
 
-        foreach (string timeoutKey in s_iconBytesTimeouts.Keys.Where(
-                     key =>
-                         key.StartsWith(sourceCachePrefix, StringComparison.OrdinalIgnoreCase) ||
-                         key.Equals(extensionCacheKey, StringComparison.OrdinalIgnoreCase)))
+        if (resetTransientFailures)
         {
-            s_iconBytesTimeouts.TryRemove(timeoutKey, out _);
-        }
+            foreach (string timeoutKey in s_iconBytesTimeouts.Keys.Where(
+                         key =>
+                             key.StartsWith(sourceCachePrefix, StringComparison.OrdinalIgnoreCase) ||
+                             key.Equals(extensionCacheKey, StringComparison.OrdinalIgnoreCase)))
+            {
+                s_iconBytesTimeouts.TryRemove(timeoutKey, out _);
+            }
 
-        s_iconSourceTimeouts.TryRemove(normalizedSourcePath, out _);
+            s_iconSourceTimeouts.TryRemove(normalizedSourcePath, out _);
+            s_iconSourceTimeouts.TryRemove(
+                BuildInternetShortcutFallbackTimeoutKey(normalizedSourcePath),
+                out _);
+        }
         PerformanceLogger.IconCacheCount = s_iconBytesCache.Count;
 
         // For directories, also invalidate the Windows shell icon cache.
@@ -1072,16 +1089,66 @@ public static class IconHelper
         string originalSourcePath,
         bool hideShortcutArrowOverlay,
         bool isShortcutPath,
+        bool isInternetShortcutPath,
         int decodePixelWidth)
     {
         if (!TryGetCachedIconBytes(iconBytesCacheKey, out var bytes))
         {
             bool shortcutProxyAttempted = false;
+            IconSource loadIconSource = iconSource;
+            if (isInternetShortcutPath)
+            {
+                // Resolve the original .url as a Shell item before interpreting
+                // IconFile ourselves. This mirrors Explorer and preserves Steam
+                // game artwork, custom protocol icons and per-user associations.
+                shortcutProxyAttempted = true;
+                bytes = await TryLoadHighResolutionShellItemIconAsync(
+                    originalSourcePath,
+                    includeOverlays: !hideShortcutArrowOverlay);
+                if (bytes is { Length: > 0 })
+                {
+                    App.LogVerbose(
+                        $"[IconHelper] Loaded Internet shortcut icon through " +
+                        $"Shell proxy path={originalSourcePath} " +
+                        $"overlays={!hideShortcutArrowOverlay}");
+                }
+                else
+                {
+                    // Only parse IconFile after the isolated Shell route fails.
+                    // The fallback resolver is itself bounded because IconFile
+                    // can name an unavailable drive or network location.
+                    IconSource? fallbackSource =
+                        await ResolveInternetShortcutFallbackSourceAsync(
+                            originalSourcePath);
+                    if (fallbackSource is not null)
+                    {
+                        loadIconSource = fallbackSource;
+                    }
+                }
+            }
+
+            if (ShouldPreferHighResolutionShellItemIcon(isShortcutPath))
+            {
+                // Ask the same isolated Shell-item pipeline used by Explorer for
+                // every real file and folder. SHGetImageList's Jumbo slot can be
+                // a pre-scaled 32/48 px bitmap even when the registered file icon
+                // contains a genuine 256 px frame. Keep the in-process image-list
+                // path below as the compatibility fallback.
+                bytes = await TryLoadHighResolutionShellItemIconAsync(
+                    originalSourcePath);
+                if (bytes is { Length: > 0 })
+                {
+                    App.LogVerbose(
+                        $"[IconHelper] Loaded high-resolution Shell item icon " +
+                        $"path={originalSourcePath}");
+                }
+            }
+
             bool preferSolutionShortcutProxy =
                 isShortcutPath &&
                 hideShortcutArrowOverlay &&
-                !ShortcutHelper.IsShortcutPath(iconSource.Path) &&
-                IsSolutionFilePath(iconSource.Path);
+                !ShortcutHelper.IsShortcutPath(loadIconSource.Path) &&
+                IsSolutionFilePath(loadIconSource.Path);
 
             if (preferSolutionShortcutProxy)
             {
@@ -1092,9 +1159,8 @@ public static class IconHelper
                 // direct extraction path below remains the compatibility
                 // fallback if the handler is unavailable.
                 shortcutProxyAttempted = true;
-                bytes = await ShellThumbnailProxy.TryLoadIconAsync(
-                    originalSourcePath,
-                    requestedSize: 256);
+                bytes = await TryLoadHighResolutionShellItemIconAsync(
+                    originalSourcePath);
                 if (bytes is { Length: > 0 })
                 {
                     bytes = ShellThumbnailProxy.NormalizeIconPayload(bytes);
@@ -1108,16 +1174,17 @@ public static class IconHelper
                 }
             }
 
-            if (bytes is not { Length: > 0 } && iconSource.UsesShellItemIcon)
+            if (bytes is not { Length: > 0 } &&
+                loadIconSource.UsesShellItemIcon &&
+                !shortcutProxyAttempted)
             {
                 // PIDL/AppUserModelID shortcuts can have no filesystem target or
                 // explicit icon resource. Ask the Shell item itself for ICONONLY
                 // in the isolated proxy so the main DeskBox process never loads
                 // third-party Shell code.
                 shortcutProxyAttempted = true;
-                bytes = await ShellThumbnailProxy.TryLoadIconAsync(
-                    iconSource.Path,
-                    requestedSize: 256);
+                bytes = await TryLoadHighResolutionShellItemIconAsync(
+                    loadIconSource.Path);
 
                 if (isShortcutPath && bytes is { Length: > 0 })
                 {
@@ -1130,15 +1197,15 @@ public static class IconHelper
                     {
                         App.LogVerbose(
                             $"[IconHelper] Invalid shortcut icon payload " +
-                            $"path={iconSource.Path}");
+                            $"path={loadIconSource.Path}");
                     }
                 }
             }
 
             bool rejectPaddedShortcutIcon =
                 isShortcutPath &&
-                (iconSource.UsesShellItemIcon ||
-                 ShortcutHelper.IsShortcutPath(iconSource.Path));
+                (loadIconSource.UsesShellItemIcon ||
+                 ShortcutHelper.IsShortcutPath(loadIconSource.Path));
 
             if (bytes is not { Length: > 0 } &&
                 !IsRecentTimeout(s_iconBytesTimeouts, iconBytesCacheKey))
@@ -1150,7 +1217,7 @@ public static class IconHelper
                                 out byte[]? cachedBytes)
                             ? cachedBytes
                             : LoadIconBytes(
-                                iconSource,
+                                loadIconSource,
                                 rejectPaddedShortcutIcon),
                         IconBytesLoadTimeout);
                 if (loadResult.Status == BoundedBackgroundWorkStatus.Completed)
@@ -1164,20 +1231,20 @@ public static class IconHelper
                     App.Log(
                         $"[IconHelper] Icon byte load timed out " +
                         $"timeoutMs={IconBytesLoadTimeout.TotalMilliseconds:0} " +
-                        $"path={iconSource.Path}");
+                        $"path={loadIconSource.Path}");
                 }
                 else if (loadResult.Status == BoundedBackgroundWorkStatus.QueueTimedOut)
                 {
                     App.LogVerbose(
                         $"[IconHelper] Icon byte load queue timed out " +
                         $"timeoutMs={IconBytesLoadTimeout.TotalMilliseconds:0} " +
-                        $"path={iconSource.Path}");
+                        $"path={loadIconSource.Path}");
                 }
                 else if (loadResult.Exception is not null)
                 {
                     App.Log(
                         $"[IconHelper] Icon byte load failed " +
-                        $"path={iconSource.Path}: {loadResult.Exception.Message}");
+                        $"path={loadIconSource.Path}: {loadResult.Exception.Message}");
                 }
             }
 
@@ -1190,7 +1257,7 @@ public static class IconHelper
             if (bytes is not { Length: > 0 } &&
                 isShortcutPath &&
                 hideShortcutArrowOverlay &&
-                !ShortcutHelper.IsShortcutPath(iconSource.Path) &&
+                !ShortcutHelper.IsShortcutPath(loadIconSource.Path) &&
                 !shortcutProxyAttempted)
             {
                 // A file-association icon handler (notably Visual Studio's
@@ -1198,9 +1265,8 @@ public static class IconHelper
                 // in-process image-list APIs. Retry from the original .lnk in
                 // the isolated Shell proxy so a handler failure cannot leave
                 // the tile permanently blank.
-                bytes = await ShellThumbnailProxy.TryLoadIconAsync(
-                    originalSourcePath,
-                    requestedSize: 256);
+                bytes = await TryLoadHighResolutionShellItemIconAsync(
+                    originalSourcePath);
                 if (bytes is { Length: > 0 })
                 {
                     bytes = ShellThumbnailProxy.NormalizeIconPayload(bytes);
@@ -1230,6 +1296,28 @@ public static class IconHelper
         return image;
     }
 
+    internal static bool ShouldPreferHighResolutionShellItemIcon(
+        bool isShortcutPath) =>
+        !isShortcutPath;
+
+    private static async Task<byte[]?> TryLoadHighResolutionShellItemIconAsync(
+        string path,
+        bool includeOverlays = false)
+    {
+        await s_shellIconLoadSemaphore.WaitAsync();
+        try
+        {
+            return await ShellThumbnailProxy.TryLoadIconAsync(
+                path,
+                requestedSize: PreferredShellItemIconSize,
+                includeOverlays: includeOverlays);
+        }
+        finally
+        {
+            s_shellIconLoadSemaphore.Release();
+        }
+    }
+
     private static async Task<BitmapImage?> LoadBitmapImageWithDiagnosticsAsync(
         Microsoft.UI.Dispatching.DispatcherQueue dispatcher,
         IconSource iconSource,
@@ -1238,6 +1326,7 @@ public static class IconHelper
         string originalSourcePath,
         bool hideShortcutArrowOverlay,
         bool isShortcutPath,
+        bool isInternetShortcutPath,
         int decodePixelWidth)
     {
         bool collectDiagnostics = PerformanceLogger.IsEnabled;
@@ -1253,6 +1342,7 @@ public static class IconHelper
                 originalSourcePath,
                 hideShortcutArrowOverlay,
                 isShortcutPath,
+                isInternetShortcutPath,
                 decodePixelWidth);
             succeeded = image is not null;
             return image;
@@ -1650,6 +1740,18 @@ public static class IconHelper
         bool hideShortcutArrowOverlay)
     {
         string normalizedSourcePath = NormalizeSourcePath(path);
+        if (ShortcutHelper.IsInternetShortcutPath(normalizedSourcePath))
+        {
+            // Internet shortcuts are Shell-authored items. Explorer can combine
+            // IconFile/IconIndex, protocol registration and per-user icon cache
+            // state that a text parser cannot reliably reproduce. Keep metadata
+            // parsing out of the primary path; it remains a bounded fallback if
+            // the isolated Shell request fails.
+            return await ResolveInternetShortcutIconSourceAsync(
+                normalizedSourcePath,
+                hideShortcutArrowOverlay);
+        }
+
         if (IsRecentTimeout(s_iconSourceTimeouts, normalizedSourcePath))
         {
             return CreateFallbackIconSource(normalizedSourcePath);
@@ -1700,6 +1802,130 @@ public static class IconHelper
 
         return CreateFallbackIconSource(normalizedSourcePath);
     }
+
+    private static async Task<ResolvedIconSource>
+        ResolveInternetShortcutIconSourceAsync(
+            string normalizedSourcePath,
+            bool hideShortcutArrowOverlay)
+    {
+        if (IsRecentTimeout(s_iconSourceTimeouts, normalizedSourcePath))
+        {
+            return CreateInternetShortcutIconSource(
+                normalizedSourcePath,
+                hideShortcutArrowOverlay,
+                sourceVersion: "unknown");
+        }
+
+        s_iconSourceTimeouts.TryRemove(normalizedSourcePath, out _);
+        BoundedBackgroundWorkResult<string> result =
+            await s_iconSourceScheduler.RunAsync(
+                () => GetFileIconVersion(normalizedSourcePath),
+                IconSourceResolutionTimeout);
+        if (result.Status == BoundedBackgroundWorkStatus.Completed &&
+            result.Value is not null)
+        {
+            s_iconSourceTimeouts.TryRemove(normalizedSourcePath, out _);
+            return CreateInternetShortcutIconSource(
+                normalizedSourcePath,
+                hideShortcutArrowOverlay,
+                result.Value);
+        }
+
+        if (result.Status == BoundedBackgroundWorkStatus.ExecutionTimedOut)
+        {
+            RecordTimeout(s_iconSourceTimeouts, normalizedSourcePath);
+            App.Log(
+                $"[IconHelper] Internet shortcut version probe timed out " +
+                $"timeoutMs={IconSourceResolutionTimeout.TotalMilliseconds:0} " +
+                $"path={normalizedSourcePath}");
+        }
+        else if (result.Status == BoundedBackgroundWorkStatus.QueueTimedOut)
+        {
+            App.LogVerbose(
+                $"[IconHelper] Internet shortcut version probe queue timed out " +
+                $"timeoutMs={IconSourceResolutionTimeout.TotalMilliseconds:0} " +
+                $"path={normalizedSourcePath}");
+        }
+        else if (result.Exception is not null)
+        {
+            App.Log(
+                $"[IconHelper] Internet shortcut version probe failed " +
+                $"path={normalizedSourcePath}: {result.Exception.Message}");
+        }
+
+        return CreateInternetShortcutIconSource(
+            normalizedSourcePath,
+            hideShortcutArrowOverlay,
+            sourceVersion: "unknown");
+    }
+
+    private static ResolvedIconSource CreateInternetShortcutIconSource(
+        string normalizedSourcePath,
+        bool hideShortcutArrowOverlay,
+        string sourceVersion) =>
+        new(
+            new IconSource(
+                normalizedSourcePath,
+                UsesShellItemIcon: true),
+            $"{BuildSourceCachePrefix(normalizedSourcePath)}" +
+            $"{InternetShortcutIconStrategyVersion}:" +
+            $"overlay={(hideShortcutArrowOverlay ? "hidden" : "shown")}:" +
+            sourceVersion);
+
+    private static async Task<IconSource?>
+        ResolveInternetShortcutFallbackSourceAsync(
+            string normalizedSourcePath)
+    {
+        string timeoutKey = BuildInternetShortcutFallbackTimeoutKey(
+            normalizedSourcePath);
+        if (IsRecentTimeout(s_iconSourceTimeouts, timeoutKey))
+        {
+            return null;
+        }
+
+        s_iconSourceTimeouts.TryRemove(timeoutKey, out _);
+        BoundedBackgroundWorkResult<IconSource> result =
+            await s_iconSourceScheduler.RunAsync(
+                () => ResolveIconSource(
+                    normalizedSourcePath,
+                    hideShortcutArrowOverlay: true),
+                IconSourceResolutionTimeout);
+
+        if (result.Status == BoundedBackgroundWorkStatus.Completed &&
+            result.Value is not null)
+        {
+            s_iconSourceTimeouts.TryRemove(timeoutKey, out _);
+            return result.Value;
+        }
+
+        if (result.Status == BoundedBackgroundWorkStatus.ExecutionTimedOut)
+        {
+            RecordTimeout(s_iconSourceTimeouts, timeoutKey);
+            App.Log(
+                $"[IconHelper] Internet shortcut fallback resolution timed out " +
+                $"timeoutMs={IconSourceResolutionTimeout.TotalMilliseconds:0} " +
+                $"path={normalizedSourcePath}");
+        }
+        else if (result.Status == BoundedBackgroundWorkStatus.QueueTimedOut)
+        {
+            App.LogVerbose(
+                $"[IconHelper] Internet shortcut fallback queue timed out " +
+                $"timeoutMs={IconSourceResolutionTimeout.TotalMilliseconds:0} " +
+                $"path={normalizedSourcePath}");
+        }
+        else if (result.Exception is not null)
+        {
+            App.Log(
+                $"[IconHelper] Internet shortcut fallback resolution failed " +
+                $"path={normalizedSourcePath}: {result.Exception.Message}");
+        }
+
+        return null;
+    }
+
+    private static string BuildInternetShortcutFallbackTimeoutKey(
+        string normalizedSourcePath) =>
+        $"url-fallback:{normalizedSourcePath}";
 
     private static bool IsRecentTimeout(
         ConcurrentDictionary<string, long> timeouts,
@@ -1973,7 +2199,16 @@ public static class IconHelper
         // Parse icon location — may contain a comma-separated index (e.g. "steam.exe,0")
         var (iconFilePath, iconFileIndex) = SplitIconLocation(shortcut.IconLocation);
         string? iconLocation = NormalizeIconLocation(iconFilePath);
-        int resolvedIconIndex = iconFileIndex >= 0 ? iconFileIndex : shortcut.IconIndex;
+        int resolvedIconIndex = iconFileIndex ?? shortcut.IconIndex;
+
+        if (!string.IsNullOrWhiteSpace(iconLocation) &&
+            TryResolveRelativeIconLocation(
+                path,
+                iconLocation,
+                out string resolvedRelativeIconLocation))
+        {
+            iconLocation = resolvedRelativeIconLocation;
+        }
 
         if (!string.IsNullOrWhiteSpace(iconLocation) &&
             File.Exists(iconLocation))
@@ -2014,31 +2249,71 @@ public static class IconHelper
         return new IconSource(path, UsesShellItemIcon: true);
     }
 
+    internal static bool TryResolveRelativeIconLocation(
+        string shortcutPath,
+        string iconLocation,
+        out string resolvedIconLocation)
+    {
+        resolvedIconLocation = string.Empty;
+        if (string.IsNullOrWhiteSpace(shortcutPath) ||
+            string.IsNullOrWhiteSpace(iconLocation) ||
+            Path.IsPathRooted(iconLocation) ||
+            iconLocation.Contains("://", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        try
+        {
+            string? shortcutDirectory = Path.GetDirectoryName(shortcutPath);
+            if (string.IsNullOrWhiteSpace(shortcutDirectory))
+            {
+                return false;
+            }
+
+            string candidate = Path.GetFullPath(
+                Path.Combine(shortcutDirectory, iconLocation));
+            if (!File.Exists(candidate))
+            {
+                return false;
+            }
+
+            resolvedIconLocation = candidate;
+            return true;
+        }
+        catch (Exception ex) when (
+            ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>
     /// Splits an icon location string into (path, index).
     /// Handles formats like "C:\\path\\to\\file.exe,0" or "file.exe,-5".
     /// </summary>
-    private static (string path, int index) SplitIconLocation(string? iconLocation)
+    internal static (string Path, int? Index) SplitIconLocation(
+        string? iconLocation)
     {
         if (string.IsNullOrWhiteSpace(iconLocation))
         {
-            return (string.Empty, -1);
+            return (string.Empty, null);
         }
 
-        string trimmed = iconLocation.Trim().Trim('"');
+        string trimmed = iconLocation.Trim();
         int lastComma = trimmed.LastIndexOf(',');
         if (lastComma <= 0 || lastComma == trimmed.Length - 1)
         {
-            return (trimmed, -1);
+            return (trimmed.Trim('"'), null);
         }
 
-        string indexPart = trimmed[(lastComma + 1)..];
+        string indexPart = trimmed[(lastComma + 1)..].Trim();
         if (int.TryParse(indexPart, out int index))
         {
-            return (trimmed[..lastComma], index);
+            return (trimmed[..lastComma].Trim().Trim('"'), index);
         }
 
-        return (trimmed, -1);
+        return (trimmed.Trim('"'), null);
     }
 
     private static string? TryFindSteamExecutable()
@@ -2236,9 +2511,13 @@ public static class IconHelper
     {
         try
         {
-            return File.Exists(filePath)
-                ? File.GetLastWriteTimeUtc(filePath).Ticks.ToString("x")
-                : "missing";
+            if (!File.Exists(filePath))
+            {
+                return "missing";
+            }
+
+            var fileInfo = new FileInfo(filePath);
+            return $"{fileInfo.Length:x}:{fileInfo.LastWriteTimeUtc.Ticks:x}";
         }
         catch
         {

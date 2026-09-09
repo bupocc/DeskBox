@@ -55,6 +55,14 @@ public static class ShortcutHelper
                extension.Equals(".url", StringComparison.OrdinalIgnoreCase);
     }
 
+    public static bool IsInternetShortcutPath(string? path)
+    {
+        return !string.IsNullOrWhiteSpace(path) &&
+               Path.GetExtension(path).Equals(
+                   ".url",
+                   StringComparison.OrdinalIgnoreCase);
+    }
+
     public static bool IsShellLinkPath(string? path)
     {
         return !string.IsNullOrWhiteSpace(path) &&

@@ -93,6 +93,10 @@ public sealed partial class SettingsWindow
         {
             _ = RefreshBackupSnapshotInventoryAsync();
         }
+        if (string.Equals(_currentSettingsSection, "PomodoroSettings", StringComparison.Ordinal))
+        {
+            PomodoroSettingsSection.RefreshFromSettings();
+        }
     }
 
     private void ApplyToggleSwitchContentVisibility()
@@ -368,7 +372,7 @@ public sealed partial class SettingsWindow
         }
 
         _featureWidgetRows.Clear();
-        FeatureWidgetList.Children.Clear();
+        FeatureWidgetList?.Children.Clear();
     }
 
     private void FeatureWidgetSettingsButton_Click(object sender, RoutedEventArgs e)

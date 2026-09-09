@@ -237,7 +237,7 @@ public sealed class OnboardingExperienceTests
             "src/DeskBox/Models/AppSettings.cs"));
         string userGuide = File.ReadAllText(Path.Combine(
             root,
-            "docs/user-guide/01-getting-started.md"));
+            "docs/articles/15-getting-started.md"));
 
         Assert.Contains("ManagedDropAction { get; set; } = \"Move\"", settingsModel, StringComparison.Ordinal);
         Assert.Contains("默认拖入行为是移动", userGuide, StringComparison.Ordinal);
@@ -428,8 +428,7 @@ public sealed class OnboardingExperienceTests
         string manager = File.ReadAllText(Path.Combine(
             root,
             "src/DeskBox/Services/WidgetManager.cs"));
-        string featureManager = File.ReadAllText(Path.Combine(
-            root,
+        string featureManager = File.ReadAllText(TestPaths.SourceFile(
             "src/DeskBox/Services/WidgetManager.FeatureWidgets.cs"));
         string settingsCallbacks = File.ReadAllText(Path.Combine(
             root,

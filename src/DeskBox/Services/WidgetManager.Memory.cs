@@ -19,6 +19,9 @@ internal readonly record struct LongHiddenWidgetResourceReleaseResult(
 
 public sealed partial class WidgetManager
 {
+    internal Task WaitForTrayAnimationsIdleAsync() =>
+        _trayBatchAnimationDriver.WaitForIdleAsync();
+
     internal int ActiveFolderWatcherCount =>
         GetFolderWatcherHealthSnapshots().Count(snapshot =>
             snapshot.NativeWatcherActive || snapshot.QueryWatcherActive);

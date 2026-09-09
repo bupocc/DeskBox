@@ -561,7 +561,10 @@ public partial class WidgetViewModel
         string normalizedPath = Path.GetFullPath(folderPath);
         if (App.Current?.WidgetManager is { } pathWidgetManager)
         {
-            pathWidgetManager.EnsureFileWidgetPathAvailable(normalizedPath, Config.Id);
+            pathWidgetManager.EnsureFileWidgetPathAvailable(
+                normalizedPath,
+                Config.Id,
+                candidateFollowsDefaultStoragePath: false);
         }
         else
         {
@@ -569,12 +572,20 @@ public partial class WidgetViewModel
                 widget.WidgetKind == WidgetKind.File &&
                 !string.Equals(widget.Id, Config.Id, StringComparison.Ordinal) &&
                 !string.IsNullOrWhiteSpace(widget.MappedFolderPath) &&
-                FileService.PathsOverlap(normalizedPath, widget.MappedFolderPath));
-            if (conflict is not null)
+                WidgetManager.IsFileWidgetPathConflict(
+                    normalizedPath,
+                    candidateFollowsDefaultStoragePath: false,
+                    widget));
+            string managedStorageRoot =
+                SettingsService.NormalizeManagedStorageRootPath(
+                    _settingsService.Settings.DefaultManagedStorageRootPath);
+            if (conflict is not null ||
+                FileService.PathsOverlap(normalizedPath, managedStorageRoot))
             {
                 throw new InvalidOperationException(_localizationService.Format(
                     "Widget.Error.FileWidgetPathConflict",
-                    conflict.Name));
+                    conflict?.Name ??
+                    _localizationService.T("WidgetTitleIcon.Label.ManagedStorage")));
             }
         }
 

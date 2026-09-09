@@ -74,6 +74,32 @@ public sealed class FileServiceTests : IDisposable
     }
 
     [Fact]
+    public void IsUnsafeDirectoryTransfer_RejectsDestinationInsideSource()
+    {
+        string source = Directory.CreateDirectory(
+            Path.Combine(_tempRoot, "source-root")).FullName;
+        string destination = Directory.CreateDirectory(
+            Path.Combine(source, "deskbox")).FullName;
+
+        Assert.True(FileService.IsUnsafeDirectoryTransfer([source], destination));
+        Assert.True(FileService.IsUnsafeDirectoryTransfer([destination], destination));
+    }
+
+    [Fact]
+    public void IsUnsafeDirectoryTransfer_AllowsSiblingDestinationAndFiles()
+    {
+        string source = Directory.CreateDirectory(
+            Path.Combine(_tempRoot, "source-sibling")).FullName;
+        string destination = Directory.CreateDirectory(
+            Path.Combine(_tempRoot, "destination-sibling")).FullName;
+        string file = Path.Combine(source, "note.txt");
+        File.WriteAllText(file, "content");
+
+        Assert.False(FileService.IsUnsafeDirectoryTransfer([source], destination));
+        Assert.False(FileService.IsUnsafeDirectoryTransfer([file], destination));
+    }
+
+    [Fact]
     public void PathsOverlap_MatchesEqualAndAncestorPathsButNotSiblings()
     {
         string root = Path.Combine(_tempRoot, "root");
@@ -312,6 +338,178 @@ public sealed class FileServiceTests : IDisposable
         Assert.True(Directory.Exists(sourceDirectory));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TransferItemsWithResultAsync_RejectsDestinationInsideSourceThroughJunction(
+        bool move)
+    {
+        var service = new FileService();
+        string sourceDirectory = Directory.CreateDirectory(
+            Path.Combine(_tempRoot, "physical-source")).FullName;
+        File.WriteAllText(Path.Combine(sourceDirectory, "file.txt"), "content");
+        string sourceAlias = Path.Combine(_tempRoot, "source-alias");
+
+        Assert.True(
+            TryCreateDirectoryJunction(sourceAlias, sourceDirectory),
+            "The Windows test host must support creating a directory junction.");
+        try
+        {
+            string destinationRoot = Path.Combine(sourceAlias, "nested");
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                service.TransferItemsWithResultAsync(
+                    [sourceDirectory],
+                    destinationRoot,
+                    move));
+
+            Assert.False(Directory.Exists(
+                Path.Combine(sourceDirectory, "nested")));
+            Assert.True(File.Exists(
+                Path.Combine(sourceDirectory, "file.txt")));
+        }
+        finally
+        {
+            TryDeleteDirectoryJunction(sourceAlias);
+        }
+    }
+
+    [Fact]
+    public void IsEntryDirectlyInDirectoryResolved_RecognizesJunctionAlias()
+    {
+        string targetDirectory = Directory.CreateDirectory(
+            Path.Combine(_tempRoot, "physical-target")).FullName;
+        string filePath = Path.Combine(targetDirectory, "note.txt");
+        File.WriteAllText(filePath, "content");
+        string junction = Path.Combine(_tempRoot, "target-alias");
+
+        Assert.True(
+            TryCreateDirectoryJunction(junction, targetDirectory),
+            "The Windows test host must support creating a directory junction.");
+        try
+        {
+            Assert.True(FileService.IsEntryDirectlyInDirectoryResolved(
+                Path.Combine(junction, "note.txt"),
+                targetDirectory));
+            Assert.True(FileService.IsEntryDirectlyInDirectoryResolved(
+                filePath,
+                junction));
+        }
+        finally
+        {
+            TryDeleteDirectoryJunction(junction);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TransferItemsWithResultAsync_MixedBatchSkipsOnlyEntriesAlreadyInDestination(
+        bool move)
+    {
+        var service = new FileService();
+        string destinationDirectory = Directory.CreateDirectory(
+            Path.Combine(_tempRoot, "mixed-target")).FullName;
+        string existingPath = Path.Combine(destinationDirectory, "existing.txt");
+        File.WriteAllText(existingPath, "existing");
+        string externalDirectory = Directory.CreateDirectory(
+            Path.Combine(_tempRoot, "mixed-source")).FullName;
+        string externalPath = Path.Combine(externalDirectory, "external.txt");
+        File.WriteAllText(externalPath, "external");
+
+        IReadOnlyList<FileService.FileTransferResult> results =
+            await service.TransferItemsWithResultAsync(
+                [existingPath, externalPath],
+                destinationDirectory,
+                move);
+
+        FileService.FileTransferResult result = Assert.Single(results);
+        Assert.Equal(externalPath, result.SourcePath);
+        Assert.Equal(
+            Path.Combine(destinationDirectory, "external.txt"),
+            result.DestinationPath);
+        Assert.True(File.Exists(existingPath));
+        Assert.False(File.Exists(
+            Path.Combine(destinationDirectory, "existing (2).txt")));
+        Assert.Equal(!move, File.Exists(externalPath));
+        Assert.Equal(
+            "external",
+            File.ReadAllText(result.DestinationPath));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TransferItemsWithResultAsync_SameDirectoryJunctionIsNoOp(
+        bool move)
+    {
+        var service = new FileService();
+        string destinationDirectory = Directory.CreateDirectory(
+            Path.Combine(_tempRoot, "junction-no-op-target")).FullName;
+        string physicalDirectory = Directory.CreateDirectory(
+            Path.Combine(_tempRoot, "junction-no-op-source")).FullName;
+        string junctionPath = Path.Combine(destinationDirectory, "linked-folder");
+
+        Assert.True(
+            TryCreateDirectoryJunction(junctionPath, physicalDirectory),
+            "The Windows test host must support creating a directory junction.");
+        try
+        {
+            IReadOnlyList<FileService.FileTransferResult> results =
+                await service.TransferItemsWithResultAsync(
+                    [junctionPath],
+                    destinationDirectory,
+                    move);
+
+            Assert.Empty(results);
+            Assert.True(Directory.Exists(junctionPath));
+            Assert.False(Directory.Exists(
+                Path.Combine(destinationDirectory, "linked-folder (2)")));
+        }
+        finally
+        {
+            TryDeleteDirectoryJunction(junctionPath);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExecuteTransferPlanAsync_RejectsNestedJunctionBeforeRecursiveCopy(
+        bool reportProgress)
+    {
+        var service = new FileService();
+        string sourceDirectory = Directory.CreateDirectory(
+            Path.Combine(_tempRoot, "source-with-loop")).FullName;
+        File.WriteAllText(Path.Combine(sourceDirectory, "file.txt"), "content");
+        string loopJunction = Path.Combine(sourceDirectory, "loop");
+        string destinationDirectory = Path.Combine(_tempRoot, "copied-loop");
+
+        Assert.True(
+            TryCreateDirectoryJunction(loopJunction, sourceDirectory),
+            "The Windows test host must support creating a directory junction.");
+        try
+        {
+            IProgress<FileService.FileTransferProgress>? progress = reportProgress
+                ? new Progress<FileService.FileTransferProgress>(_ => { })
+                : null;
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                service.ExecuteTransferPlanAsync(
+                    [new FileService.FileTransferPlan(
+                        sourceDirectory,
+                        destinationDirectory)],
+                    move: false,
+                    progress: progress));
+
+            Assert.False(Directory.Exists(
+                Path.Combine(destinationDirectory, "loop")));
+            Assert.True(File.Exists(Path.Combine(sourceDirectory, "file.txt")));
+        }
+        finally
+        {
+            TryDeleteDirectoryJunction(loopJunction);
+        }
+    }
+
     [Fact]
     public async Task TransferItemsWithResultAsync_MovesFilesToAvailableNames()
     {
@@ -519,6 +717,58 @@ public sealed class FileServiceTests : IDisposable
         FileService.DeleteSourceFileAfterCopy(sourcePath, attributes);
 
         Assert.False(File.Exists(sourcePath));
+    }
+
+    [Fact]
+    public void ManagedMoveEngine_PostsShellRenameNotificationsForRawMoves()
+    {
+        string transferSource = File.ReadAllText(TestPaths.FromRepository(
+            "src/DeskBox/Services/FileService.TransferProgress.cs"));
+        string win32Source = File.ReadAllText(TestPaths.FromRepository(
+            "src/DeskBox/Helpers/Win32Helper.cs"));
+
+        // Raw File.Move/Directory.Move/File.Delete leave Explorer views
+        // (including the desktop) with stale icons because they post no
+        // shell change notifications. Every managed move completion must
+        // report the rename: file atomic, file chunked, directory atomic,
+        // directory chunked.
+        Assert.Equal(
+            4,
+            transferSource.Split(
+                "NotifyShellItemMoved(",
+                StringSplitOptions.None).Length - 1);
+        Assert.Contains(
+            "Win32Helper.NotifyShellItemMoved(sourceFilePath, destinationFilePath)",
+            transferSource,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "Win32Helper.NotifyShellItemMoved(sourceDirectory, destinationDirectory)",
+            transferSource,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "NotifyShellDirectoriesUpdated(completedOperations, move);",
+            transferSource,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "Win32Helper.NotifyShellDirectoryUpdated(directory)",
+            transferSource,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "internal static void NotifyShellItemMoved",
+            win32Source,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "internal static void NotifyShellDirectoryUpdated",
+            win32Source,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "ShcneRenameItem",
+            win32Source,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "ShcneUpdateDir",
+            win32Source,
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1140,7 +1390,7 @@ public sealed class FileServiceTests : IDisposable
         string shortcutFile = Path.Combine(_tempRoot, "Steam.url");
         await File.WriteAllTextAsync(
             shortcutFile,
-            "[InternetShortcut]\nURL=steam://rungameid/123\nIconFile=%ProgramFiles%\\Steam\\steam.exe\nIconIndex=0\n");
+            "[InternetShortcut]\nURL=https://example.invalid/game\nIconFile=%SystemRoot%\\System32\\shell32.dll\nIconIndex=0\n");
 
         var items = await service.EnumerateDirectoryAsync(
             _tempRoot,
@@ -1150,7 +1400,43 @@ public sealed class FileServiceTests : IDisposable
         var item = Assert.Single(items);
         Assert.True(item.IsShortcut);
         Assert.Equal("Steam", item.Name);
-        Assert.Equal("steam://rungameid/123", item.TargetPath);
+        Assert.Equal("https://example.invalid/game", item.TargetPath);
+    }
+
+    [Fact]
+    public void SteamInstallState_OnlyReportsNotInstalledFromCompleteEvidence()
+    {
+        Assert.Equal(
+            SteamGameInstallState.Installed,
+            FileService.EvaluateSteamGameInstallState(
+                snapshotIsAuthoritative: true,
+                [
+                    (IsAvailable: false, HasManifest: false),
+                    (IsAvailable: true, HasManifest: true)
+                ]));
+        Assert.Equal(
+            SteamGameInstallState.Unknown,
+            FileService.EvaluateSteamGameInstallState(
+                snapshotIsAuthoritative: true,
+                [(IsAvailable: false, HasManifest: false)]));
+        Assert.Equal(
+            SteamGameInstallState.Unknown,
+            FileService.EvaluateSteamGameInstallState(
+                snapshotIsAuthoritative: false,
+                [(IsAvailable: true, HasManifest: false)]));
+        Assert.Equal(
+            SteamGameInstallState.Unknown,
+            FileService.EvaluateSteamGameInstallState(
+                snapshotIsAuthoritative: true,
+                []));
+        Assert.Equal(
+            SteamGameInstallState.NotInstalled,
+            FileService.EvaluateSteamGameInstallState(
+                snapshotIsAuthoritative: true,
+                [
+                    (IsAvailable: true, HasManifest: false),
+                    (IsAvailable: true, HasManifest: false)
+                ]));
     }
 
     [Fact]

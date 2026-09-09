@@ -54,17 +54,29 @@ public sealed partial class FileItemSurface : UserControl, INotifyPropertyChange
             new PropertyMetadata(double.PositiveInfinity));
 
     private FileItemSurfaceVisualState _visualState = FileItemSurfaceVisualState.Normal;
+    private FileItemPointerFeedback _pointerFeedback;
     private FileTransferPathState _transferState = FileTransferPathState.None;
     private string _transferStatusText = string.Empty;
     private bool _isOpening;
     private string _openingStatusText = string.Empty;
     private WidgetViewModel? _subscribedLayoutContext;
     private bool _isSurfaceLoaded;
+    private FrameworkElement? _iconLayout;
+    private FrameworkElement? _listLayout;
+    private TextBlock? _iconItemNameText;
+    private TextBlock? _listItemNameText;
 
     public FileItemSurface()
     {
         InitializeComponent();
         DataContextChanged += FileItemSurface_DataContextChanged;
+        // PointerEntered alone is not a reliable recovery signal during
+        // initial layout or container reuse. Observe movement even when a
+        // child handles it, without consuming input or taking pointer capture.
+        SurfaceBorder.AddHandler(
+            UIElement.PointerMovedEvent,
+            new PointerEventHandler(SurfaceBorder_PointerMoved),
+            handledEventsToo: true);
     }
 
     public event EventHandler<FileItemSurfaceVisualStateChangedEventArgs>? VisualStateChanged;
@@ -196,10 +208,64 @@ public sealed partial class FileItemSurface : UserControl, INotifyPropertyChange
 
     public Border InteractiveBorder => SurfaceBorder;
 
-    public TextBlock ItemNameText =>
-        Mode == FileItemSurfaceMode.List
-            ? ListItemNameText
-            : IconItemNameText;
+    public TextBlock ItemNameText
+    {
+        get
+        {
+            // Rename can ask for the name before the first Loaded event.
+            EnsureActiveLayout();
+            return Mode == FileItemSurfaceMode.List
+                ? _listItemNameText!
+                : _iconItemNameText!;
+        }
+    }
+
+    protected override Windows.Foundation.Size MeasureOverride(
+        Windows.Foundation.Size availableSize)
+    {
+        // XAML assigns Mode after construction. Waiting until measurement
+        // avoids creating an unused icon layout for every list-mode item,
+        // while still measuring the real content before it can receive input.
+        EnsureActiveLayout();
+        return base.MeasureOverride(availableSize);
+    }
+
+    private void EnsureActiveLayout()
+    {
+        if (Mode == FileItemSurfaceMode.List)
+        {
+            if (_listLayout is null)
+            {
+                (_listLayout, _listItemNameText) = CreateLayout(
+                    "ListItemLayoutTemplate", "ListItemNameText");
+            }
+        }
+        else if (_iconLayout is null)
+        {
+            (_iconLayout, _iconItemNameText) = CreateLayout(
+                "IconItemLayoutTemplate", "IconItemNameText");
+        }
+    }
+
+    private (FrameworkElement Layout, TextBlock NameText) CreateLayout(
+        string templateKey,
+        string nameElement)
+    {
+        var template = (DataTemplate)Resources[templateKey];
+        var layout = (FrameworkElement)template.LoadContent();
+        var nameText = (TextBlock)layout.FindName(nameElement);
+        var bindings = Microsoft.UI.Xaml.Markup.XamlBindingHelper
+            .GetDataTemplateComponent(layout) ??
+            throw new InvalidOperationException($"Missing file item bindings: {templateKey}");
+
+        // Compiled presentation bindings read this surface. ProcessBindings
+        // also detaches the generated DataContextChanged handler before the
+        // layout inherits the WidgetItem from its unchanged interaction shell.
+        // Ordinary file/thumbnail bindings therefore keep their original source.
+        bindings.ProcessBindings(this, 0, 0, out _);
+        LayoutHost.Children.Add(layout);
+        return (layout, nameText);
+    }
 
     internal void SetTransferState(
         FileTransferPathState state,
@@ -244,6 +310,9 @@ public sealed partial class FileItemSurface : UserControl, INotifyPropertyChange
         OnPropertyChanged(nameof(IsOpening));
         UpdateActivityPresentation();
     }
+
+    internal void ClearPointerFeedbackAfterOpen() =>
+        SetVisualState(_pointerFeedback.OnOpenDispatched());
 
     private void UpdateActivityPresentation()
     {
@@ -294,6 +363,15 @@ public sealed partial class FileItemSurface : UserControl, INotifyPropertyChange
                 surface.RefreshLayoutContextSubscription();
             }
 
+            if (args.Property == ModeProperty)
+            {
+                if (surface._iconLayout is not null || surface._listLayout is not null)
+                {
+                    surface.EnsureActiveLayout();
+                }
+                surface.InvalidateMeasure();
+            }
+
             surface.NotifyPresentationChanged();
         }
     }
@@ -338,6 +416,7 @@ public sealed partial class FileItemSurface : UserControl, INotifyPropertyChange
         // ListView virtualization can reuse a loaded surface for a different
         // item without raising Loaded again. Reset pointer state and ask the
         // host to reapply all item-dependent styling, especially cut opacity.
+        _pointerFeedback.ResetForReuse();
         _visualState = FileItemSurfaceVisualState.Normal;
         SetOpeningState(false, string.Empty);
         SetTransferState(FileTransferPathState.None, string.Empty);
@@ -362,8 +441,10 @@ public sealed partial class FileItemSurface : UserControl, INotifyPropertyChange
 
     private void SurfaceBorder_Loaded(object sender, RoutedEventArgs e)
     {
+        EnsureActiveLayout();
         _isSurfaceLoaded = true;
         RefreshLayoutContextSubscription();
+        _pointerFeedback.ResetForReuse();
         SetVisualState(FileItemSurfaceVisualState.Normal);
         NotifyPresentationChanged();
     }
@@ -373,12 +454,14 @@ public sealed partial class FileItemSurface : UserControl, INotifyPropertyChange
         _isSurfaceLoaded = false;
         DetachLayoutContextSubscription();
         SetOpeningState(false, string.Empty);
+        _pointerFeedback.ResetForReuse();
         SetVisualState(FileItemSurfaceVisualState.Normal);
     }
 
     private void SurfaceBorder_PointerEntered(object sender, PointerRoutedEventArgs e)
     {
-        SetVisualState(FileItemSurfaceVisualState.Hover);
+        ObservePointerPosition(e);
+        SetVisualState(_pointerFeedback.OnPointerEntered());
     }
 
     private void SurfaceBorder_PointerExited(object sender, PointerRoutedEventArgs e)
@@ -386,28 +469,50 @@ public sealed partial class FileItemSurface : UserControl, INotifyPropertyChange
         SetVisualState(FileItemSurfaceVisualState.Normal);
     }
 
+    private void SurfaceBorder_PointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        var point = e.GetCurrentPoint(SurfaceBorder);
+        if (point.Position.X < 0 || point.Position.Y < 0 ||
+            point.Position.X > SurfaceBorder.ActualWidth ||
+            point.Position.Y > SurfaceBorder.ActualHeight)
+        {
+            return;
+        }
+
+        SetVisualState(_pointerFeedback.OnPointerMoved(
+            _visualState,
+            point.IsInContact,
+            point.Position.X,
+            point.Position.Y));
+    }
+
     private void SurfaceBorder_PointerPressed(object sender, PointerRoutedEventArgs e)
     {
-        SetVisualState(FileItemSurfaceVisualState.Pressed);
+        ObservePointerPosition(e);
+        SetVisualState(_pointerFeedback.OnPointerPressed());
     }
 
     private void SurfaceBorder_PointerReleased(object sender, PointerRoutedEventArgs e)
     {
-        Windows.Foundation.Point point = e.GetCurrentPoint(SurfaceBorder).Position;
+        Windows.Foundation.Point point = ObservePointerPosition(e);
         bool inside =
             point.X >= 0 &&
             point.Y >= 0 &&
             point.X <= SurfaceBorder.ActualWidth &&
             point.Y <= SurfaceBorder.ActualHeight;
-        SetVisualState(
-            inside
-                ? FileItemSurfaceVisualState.Hover
-                : FileItemSurfaceVisualState.Normal);
+        SetVisualState(_pointerFeedback.OnPointerReleased(inside));
     }
 
     private void SurfaceBorder_PointerCaptureLost(object sender, PointerRoutedEventArgs e)
     {
         SetVisualState(FileItemSurfaceVisualState.Normal);
+    }
+
+    private Windows.Foundation.Point ObservePointerPosition(PointerRoutedEventArgs e)
+    {
+        Windows.Foundation.Point point = e.GetCurrentPoint(SurfaceBorder).Position;
+        _pointerFeedback.RecordPointerPosition(point.X, point.Y);
+        return point;
     }
 
     private void SetVisualState(FileItemSurfaceVisualState state)

@@ -1,5 +1,6 @@
 ﻿﻿// Copyright (c) DeskBox. All rights reserved.
 
+using DeskBox.Contracts;
 using DeskBox.Models;
 using DeskBox.Helpers;
 using DeskBox.Controls.WidgetContents;
@@ -195,6 +196,32 @@ public sealed partial class WidgetManager
         }
     }
 
+    /// <summary>
+    /// ITodoReminderPresenter implementation (stage 3b, cut point 1).
+    /// Delegates to the existing reminder-target flow and keeps the
+    /// host-specific diagnostics (window handle, visibility, XamlRoot
+    /// commit state) in the adapter's logging; port consumers see the
+    /// end-to-end TargetPresented success signal only.
+    /// </summary>
+    public async Task<TodoReminderPresentationResult> PresentReminderTargetAsync(
+        string? widgetId,
+        string? itemId,
+        bool preferTodayFilter)
+    {
+        TodoReminderTargetPresentationResult presentation =
+            await ShowTodoReminderTargetAsync(widgetId, itemId, preferTodayFilter);
+        App.Log(
+            $"[Notification] Todo target presentation widget={presentation.WidgetId} " +
+            $"item={presentation.ItemId ?? "none"} hwnd={presentation.WindowHandle} " +
+            $"visible={presentation.Visible} xamlRoot={presentation.HasXamlRoot} " +
+            $"itemPresented={presentation.ItemPresented} " +
+            $"targetPresented={presentation.TargetPresented}");
+        return new TodoReminderPresentationResult(
+            presentation.WidgetId,
+            presentation.ItemPresented,
+            presentation.TargetPresented);
+    }
+
     internal async Task<TodoReminderTargetPresentationResult> ShowTodoReminderTargetAsync(
         string? widgetId,
         string? itemId,
@@ -337,6 +364,7 @@ public sealed partial class WidgetManager
             WidgetKind.Weather => "Weather.Title",
             WidgetKind.Search => "Search.Title",
             WidgetKind.Glance => "Glance.Title",
+            WidgetKind.Pomodoro => "Pomodoro.Title",
             WidgetKind.Tags => "Tags.Title",
             WidgetKind.SystemMonitor => "SystemMonitor.Title",
             _ => string.Empty
@@ -386,6 +414,7 @@ public sealed partial class WidgetManager
                 WidgetKind.Weather => 200,
                 WidgetKind.Search => 280,
                 WidgetKind.Glance => 360,
+                WidgetKind.Pomodoro => 300,
                 _ => Math.Max(_settingsService.Settings.DefaultWidgetWidth, 320)
             },
             Height = kind switch
@@ -394,6 +423,7 @@ public sealed partial class WidgetManager
                 WidgetKind.Weather => 200,
                 WidgetKind.Search => 90,
                 WidgetKind.Glance => 260,
+                WidgetKind.Pomodoro => 330,
                 _ => Math.Max(_settingsService.Settings.DefaultWidgetHeight, 360)
             }
         };
@@ -643,22 +673,18 @@ public sealed partial class WidgetManager
         }
     }
 
-    public IReadOnlyList<QuickCaptureFileWidgetTarget> GetQuickCaptureFileWidgetTargets()
+    public IReadOnlyList<FileWidgetImportTarget> GetImportTargets()
     {
         return _settingsService.Settings.Widgets
             .Where(widget => widget.WidgetKind == WidgetKind.File &&
                              !widget.IsDisabled &&
                              !IsDeleted(widget.Id) &&
                              TryGetFileWidgetFolderPath(widget, out _))
-            .Select(widget =>
-            {
-                TryGetFileWidgetFolderPath(widget, out string folderPath);
-                return new QuickCaptureFileWidgetTarget(widget.Id, widget.Name, folderPath);
-            })
+            .Select(widget => new FileWidgetImportTarget(widget.Id, widget.Name))
             .ToList();
     }
 
-    public QuickCaptureFileWidgetTarget? GetLastQuickCaptureFileWidgetTarget()
+    public FileWidgetImportTarget? GetLastImportTarget()
     {
         string lastTargetId = _settingsService.Settings.LastQuickCaptureFileWidgetId;
         if (string.IsNullOrWhiteSpace(lastTargetId))
@@ -666,57 +692,226 @@ public sealed partial class WidgetManager
             return null;
         }
 
-        return GetQuickCaptureFileWidgetTargets()
+        return GetImportTargets()
             .FirstOrDefault(target => string.Equals(target.WidgetId, lastTargetId, StringComparison.Ordinal));
     }
 
-    public async Task<string?> SaveQuickCaptureItemToFileWidgetAsync(
-        QuickCaptureItem item,
+    /// <summary>
+    /// IFileWidgetImportTarget implementation (stage 3b, cut point 2). The
+    /// QuickCapture-specific item-to-file translation (naming, .url
+    /// InternetShortcut format, content-derived names) lives on the
+    /// producer side (QuickCaptureService.BuildFileImportPlan); this side
+    /// owns the File-widget internals: target validation, folder
+    /// resolution, the write itself, and the post-import refresh/reveal.
+    /// Sink discipline: a producer may pass an arbitrary file name, so the
+    /// sink itself confines writes - the name is reduced to its final path
+    /// segment and the destination is verified to sit inside the widget's
+    /// backing folder. Writes go through a temp file moved into place so a
+    /// cancellation or I/O failure never leaves a partial destination.
+    /// Returns null only for an invalid target or unusable input; I/O
+    /// failures and cancellation propagate as exceptions.
+    /// </summary>
+    public async Task<string?> TryImportFileAsync(
+        string sourceFilePath,
         string targetWidgetId,
-        string? imageFileNamePrefix = null)
+        string? preferredFileName = null,
+        CancellationToken cancellationToken = default)
     {
-        if (item.IsDeleted ||
-            string.IsNullOrWhiteSpace(targetWidgetId) ||
-            FindConfig(targetWidgetId) is not { } targetConfig ||
-            targetConfig.WidgetKind != WidgetKind.File ||
-            targetConfig.IsDisabled ||
-            IsDeleted(targetWidgetId) ||
-            !TryGetFileWidgetFolderPath(targetConfig, out string targetFolderPath))
+        if (!TryResolveImportTarget(targetWidgetId, out string targetFolderPath) ||
+            !TryResolveImportDestination(
+                targetFolderPath,
+                preferredFileName ?? Path.GetFileName(sourceFilePath),
+                out string destinationPath,
+                out string baseCandidatePath))
         {
             return null;
         }
 
         Directory.CreateDirectory(targetFolderPath);
-        string? destinationPath = item.Type switch
+        string tempPath = Path.Combine(targetFolderPath, $".import-{Guid.NewGuid():N}.tmp");
+        try
         {
-            QuickCaptureItemType.Image => await SaveQuickCaptureImageToFolderAsync(item, targetFolderPath, imageFileNamePrefix),
-            QuickCaptureItemType.Link => await SaveQuickCaptureLinkToFolderAsync(item, targetFolderPath),
-            _ => await SaveQuickCaptureTextToFolderAsync(item, targetFolderPath)
-        };
-
-        if (!string.IsNullOrWhiteSpace(destinationPath))
-        {
-            RememberLastQuickCaptureFileWidgetTarget(targetWidgetId);
-            if (_fileWidgets.TryGetValue(targetWidgetId, out var targetEntry))
+            await using (FileStream source = File.OpenRead(sourceFilePath))
+            await using (FileStream temp = File.Create(tempPath))
             {
-                await targetEntry.ViewModel.RefreshFromConfigAsync();
-                targetEntry.RevealSavedItem(destinationPath);
+                // Streaming copy so cancellation is honored mid-transfer,
+                // unlike File.Copy/Task.Run (round-5 review requirement).
+                await source.CopyToAsync(temp, cancellationToken);
             }
-            else
+
+            destinationPath = MoveImportIntoPlace(tempPath, baseCandidatePath, destinationPath);
+        }
+        catch
+        {
+            TryDeleteFile(tempPath);
+            throw;
+        }
+
+        return await FinalizeImportAsync(targetWidgetId, destinationPath);
+    }
+
+    public async Task<string?> TryImportTextAsync(        string text,
+        string fileName,
+        string targetWidgetId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(text) || string.IsNullOrWhiteSpace(fileName))
+        {
+            return null;
+        }
+
+        if (!TryResolveImportTarget(targetWidgetId, out string targetFolderPath) ||
+            !TryResolveImportDestination(
+                targetFolderPath,
+                fileName,
+                out string destinationPath,
+                out string baseCandidatePath))
+        {
+            return null;
+        }
+
+        Directory.CreateDirectory(targetFolderPath);
+        string tempPath = Path.Combine(targetFolderPath, $".import-{Guid.NewGuid():N}.tmp");
+        try
+        {
+            await File.WriteAllTextAsync(tempPath, text, cancellationToken);
+            destinationPath = MoveImportIntoPlace(tempPath, baseCandidatePath, destinationPath);
+        }
+        catch
+        {
+            TryDeleteFile(tempPath);
+            throw;
+        }
+
+        return await FinalizeImportAsync(targetWidgetId, destinationPath);
+    }
+
+    /// <summary>
+    /// Confines a producer-supplied file name to the widget folder: a name
+    /// with any path structure (separators, rooted segments, ..-traversal,
+    /// absolute paths) is REJECTED as unusable input rather than silently
+    /// reinterpreted - producers cannot be trusted to sanitize, and a
+    /// reduced name would mask the producer bug. Containment is checked via
+    /// GetRelativePath so drive-root and share-root mapped folders (where
+    /// folder + separator can never prefix-match a child) stay importable.
+    /// </summary>
+    internal static bool TryResolveImportDestination(
+        string targetFolderPath,
+        string? fileName,
+        out string destinationPath,
+        out string baseCandidatePath)
+    {
+        destinationPath = string.Empty;
+        baseCandidatePath = string.Empty;
+        string? candidate = fileName?.Trim();
+        if (string.IsNullOrWhiteSpace(candidate) ||
+            candidate is "." or ".." ||
+            !string.Equals(candidate, Path.GetFileName(candidate), StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        try
+        {
+            string normalizedFolder = Path.GetFullPath(targetFolderPath);
+            baseCandidatePath = Path.GetFullPath(Path.Combine(normalizedFolder, candidate));
+            string relative = Path.GetRelativePath(normalizedFolder, baseCandidatePath);
+            if (relative.Length == 0 ||
+                relative == ".." ||
+                relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal) ||
+                Path.IsPathRooted(relative))
             {
-                ContentWidgetWindow? contentWindow = _contentWidgets.Values
-                    .Distinct()
-                    .FirstOrDefault(window =>
-                        window.CurrentContent is FileSurfaceContent surface &&
-                        string.Equals(
-                            surface.WidgetId,
-                            targetWidgetId,
-                            StringComparison.Ordinal));
-                if (contentWindow?.CurrentContent is FileSurfaceContent fileSurface)
-                {
-                    await fileSurface.ViewModel.RefreshFromConfigAsync();
-                    fileSurface.RevealSavedItem(destinationPath);
-                }
+                baseCandidatePath = string.Empty;
+                return false;
+            }
+
+            destinationPath = FileService.GetAvailablePath(baseCandidatePath);
+            return true;
+        }
+        catch (Exception)
+        {
+            // Pathologically malformed names (invalid chars, ADS-shaped)
+            // are unusable input, not an I/O failure.
+            baseCandidatePath = string.Empty;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Moves the completed temp file into place WITHOUT ever overwriting:
+    /// an auto-generated import path must never clobber a file someone
+    /// else created between GetAvailablePath and the rename (a real race on
+    /// OneDrive/NAS/shared folders). On a destination collision the next
+    /// available name is computed from the base candidate and the rename
+    /// retried. Returns the path the file actually landed on (callers must
+    /// reveal/remember THIS path, not the initially proposed one).
+    /// </summary>
+    internal static string MoveImportIntoPlace(string tempPath, string baseCandidatePath, string destinationPath)
+    {
+        string finalPath = destinationPath;
+        for (int attempt = 0; ; attempt++)
+        {
+            try
+            {
+                File.Move(tempPath, finalPath);
+                return finalPath;
+            }
+            catch (IOException) when (attempt < 3 && File.Exists(finalPath))
+            {
+                // The destination was taken after GetAvailablePath picked
+                // it; take the next free variant instead of clobbering.
+                finalPath = FileService.GetAvailablePath(baseCandidatePath);
+            }
+        }
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private bool TryResolveImportTarget(string targetWidgetId, out string targetFolderPath)
+    {
+        targetFolderPath = string.Empty;
+        return !string.IsNullOrWhiteSpace(targetWidgetId) &&
+               FindConfig(targetWidgetId) is { } targetConfig &&
+               targetConfig.WidgetKind == WidgetKind.File &&
+               !targetConfig.IsDisabled &&
+               !IsDeleted(targetWidgetId) &&
+               TryGetFileWidgetFolderPath(targetConfig, out targetFolderPath);
+    }
+
+    private async Task<string?> FinalizeImportAsync(string targetWidgetId, string destinationPath)
+    {
+        RememberLastQuickCaptureFileWidgetTarget(targetWidgetId);
+        if (_fileWidgets.TryGetValue(targetWidgetId, out var targetEntry))
+        {
+            await targetEntry.ViewModel.RefreshFromConfigAsync();
+            targetEntry.RevealSavedItem(destinationPath);
+        }
+        else
+        {
+            ContentWidgetWindow? contentWindow = _contentWidgets.Values
+                .Distinct()
+                .FirstOrDefault(window =>
+                    window.CurrentContent is FileSurfaceContent surface &&
+                    string.Equals(
+                        surface.WidgetId,
+                        targetWidgetId,
+                        StringComparison.Ordinal));
+            if (contentWindow?.CurrentContent is FileSurfaceContent fileSurface)
+            {
+                await fileSurface.ViewModel.RefreshFromConfigAsync();
+                fileSurface.RevealSavedItem(destinationPath);
             }
         }
 
@@ -732,86 +927,6 @@ public sealed partial class WidgetManager
 
         _settingsService.Settings.LastQuickCaptureFileWidgetId = widgetId;
         _settingsService.SaveDebounced(notifySubscribers: false);
-    }
-
-    private async Task<string?> SaveQuickCaptureImageToFolderAsync(
-        QuickCaptureItem item,
-        string targetFolderPath,
-        string? imageFileNamePrefix)
-    {
-        if (string.IsNullOrWhiteSpace(item.ImagePath) || !File.Exists(item.ImagePath))
-        {
-            return null;
-        }
-
-        string fileName = QuickCaptureService.BuildImageExportFileName(
-            imageFileNamePrefix,
-            item.UpdatedAt == default ? item.CreatedAt : item.UpdatedAt,
-            item.ImagePath);
-        string destinationPath = FileService.GetAvailablePath(Path.Combine(targetFolderPath, fileName));
-        await Task.Run(() => File.Copy(item.ImagePath, destinationPath));
-        return destinationPath;
-    }
-
-    private async Task<string?> SaveQuickCaptureTextToFolderAsync(QuickCaptureItem item, string targetFolderPath)
-    {
-        string body = item.Body?.Trim() ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(body))
-        {
-            return null;
-        }
-
-        string fileName = BuildQuickCaptureContentFileName(
-            body,
-            _localizationService.T("QuickCapture.TextFileNamePrefix"),
-            ".txt");
-        string destinationPath = FileService.GetAvailablePath(Path.Combine(targetFolderPath, fileName));
-        await File.WriteAllTextAsync(destinationPath, body);
-        return destinationPath;
-    }
-
-    private async Task<string?> SaveQuickCaptureLinkToFolderAsync(QuickCaptureItem item, string targetFolderPath)
-    {
-        string url = string.IsNullOrWhiteSpace(item.Url) ? item.Body?.Trim() ?? string.Empty : item.Url.Trim();
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
-        {
-            return await SaveQuickCaptureTextToFolderAsync(item, targetFolderPath);
-        }
-
-        string baseText = string.IsNullOrWhiteSpace(uri.Host) ? uri.AbsoluteUri : uri.Host;
-        string fileName = BuildQuickCaptureContentFileName(
-            baseText,
-            _localizationService.T("QuickCapture.LinkFileNamePrefix"),
-            ".url");
-        string destinationPath = FileService.GetAvailablePath(Path.Combine(targetFolderPath, fileName));
-        await File.WriteAllTextAsync(destinationPath, $"[InternetShortcut]{Environment.NewLine}URL={uri.AbsoluteUri}{Environment.NewLine}");
-        return destinationPath;
-    }
-
-    private static string BuildQuickCaptureContentFileName(string? body, string fallbackName, string extension)
-    {
-        string firstLine = body?
-            .Split(["\r\n", "\n"], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .FirstOrDefault() ?? string.Empty;
-        string baseName = FileService.SanitizeFileSystemName(firstLine);
-        if (baseName.Length > 36)
-        {
-            baseName = baseName[..36].Trim().TrimEnd('.');
-        }
-
-        if (string.IsNullOrWhiteSpace(baseName))
-        {
-            baseName = FileService.SanitizeFileSystemName(fallbackName);
-        }
-
-        if (string.IsNullOrWhiteSpace(baseName))
-        {
-            baseName = "Quick Capture";
-        }
-
-        return baseName.EndsWith(extension, StringComparison.OrdinalIgnoreCase)
-            ? baseName
-            : baseName + extension;
     }
 
     private bool TryGetFileWidgetFolderPath(WidgetConfig widget, out string folderPath)
@@ -1050,6 +1165,13 @@ public sealed partial class WidgetManager
                 {
                     await GlanceWidgetStore.DeleteForWidgetAsync(duplicate.Id);
                 }
+                else if (kind == WidgetKind.Todo)
+                {
+                    // Duplicate todo instances keep their own stores and
+                    // attachments; dropping the config alone used to orphan
+                    // them under data/widgets/{id}/.
+                    await TodoWidgetStore.DeleteForWidgetAsync(duplicate.Id);
+                }
                 if (!_settingsService.Settings.DeletedWidgetIds.Contains(duplicate.Id))
                 {
                     _settingsService.Settings.DeletedWidgetIds.Add(duplicate.Id);
@@ -1128,6 +1250,7 @@ public sealed partial class WidgetManager
         config.IsDisabled = kind == WidgetKind.Glance && !isEnabled;
         config.IsPositionLocked = false;
         config.IsSizeLocked = false;
+        config.IsAlwaysOnTop = false;
         config.Metadata ??= [];
         config.Metadata.Clear();
         ApplyDefaultFeatureWidgetChromeMode(config, kind);
@@ -1270,6 +1393,11 @@ public sealed partial class WidgetManager
         return SetContentFeatureWidgetEnabledAsync(WidgetKind.Search, enabled, reveal);
     }
 
+    private Task SetPomodoroFeatureWidgetEnabledAsync(bool enabled, bool reveal)
+    {
+        return SetContentFeatureWidgetEnabledAsync(WidgetKind.Pomodoro, enabled, reveal);
+    }
+
     private Task SetGlanceFeatureWidgetEnabledAsync(bool enabled, bool reveal)
     {
         return SetGlanceFeatureWidgetEnabledCoreAsync(enabled, reveal);
@@ -1319,21 +1447,70 @@ public sealed partial class WidgetManager
         return FeatureWidgetSettings.IsFeatureWidget(kind);
     }
 
+    /// <summary>
+    /// IFeatureStateEvents implementation (stage 3b, cut point 3): instead
+    /// of a hardcoded switch calling App.Current service refreshers, the
+    /// state change is raised as an event and the App-side subscriber owns
+    /// its services. Per-subscriber exception isolation keeps one failing
+    /// listener from breaking the others (contract pinned in the port).
+    /// </summary>
+    public event Action<FeatureStateChangedEventArgs>? FeatureStateChanged;
+
     private void SetFeatureWidgetEnabledState(WidgetKind kind, bool enabled)
     {
         FeatureWidgetSettings.SetEnabled(_settingsService.Settings, kind, enabled);
         _lastFeatureWidgetEnabledStates[kind] = enabled;
-        switch (kind)
+        if (TryGetFeatureId(kind) is { } featureId)
         {
-            case WidgetKind.Search:
-                App.Current.SetSearchFeatureEnabled(enabled);
-                break;
-            case WidgetKind.QuickCapture:
-                App.Current.RefreshQuickCaptureClipboardService();
-                break;
-            case WidgetKind.Todo:
-                App.Current.RefreshTodoReminderService();
-                break;
+            RaiseFeatureStateChanged(featureId, enabled);
+        }
+    }
+
+    private static FeatureId? TryGetFeatureId(WidgetKind kind) => kind switch
+    {
+        WidgetKind.Search => DeskBoxFeatureIds.Search,
+        WidgetKind.QuickCapture => DeskBoxFeatureIds.QuickCapture,
+        WidgetKind.Todo => DeskBoxFeatureIds.Todo,
+        WidgetKind.Music => DeskBoxFeatureIds.Music,
+        WidgetKind.Weather => DeskBoxFeatureIds.Weather,
+        WidgetKind.Glance => DeskBoxFeatureIds.Glance,
+        _ => null
+    };
+
+    private void RaiseFeatureStateChanged(FeatureId featureId, bool enabled)
+    {
+        // The port contract promises UI-thread delivery. Current call sites
+        // are UI-thread, but a future background caller must not silently
+        // break the contract - marshal instead.
+        if (!HasUiThreadAccess())
+        {
+            _ = RunOnUiThreadAsync(() =>
+            {
+                RaiseFeatureStateChanged(featureId, enabled);
+                return Task.CompletedTask;
+            });
+            return;
+        }
+
+        if (FeatureStateChanged is null)
+        {
+            return;
+        }
+
+        var args = new FeatureStateChangedEventArgs(featureId, enabled);
+        foreach (Action<FeatureStateChangedEventArgs> handler in
+                 FeatureStateChanged.GetInvocationList())
+        {
+            try
+            {
+                handler(args);
+            }
+            catch (Exception ex)
+            {
+                App.Log(
+                    $"[WidgetManager] FeatureStateChanged subscriber failed for " +
+                    $"'{featureId.Value}': {ex.Message}");
+            }
         }
     }
 

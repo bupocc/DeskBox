@@ -159,6 +159,81 @@ public sealed class FileWidgetFolderNavigationContractTests
             StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Navigation_KeepsFolderShortcutsAsFilesWhileRoutingActivation()
+    {
+        string root = FindRepositoryRoot();
+        string navigation = File.ReadAllText(Path.Combine(
+            root,
+            "src/DeskBox/ViewModels/WidgetViewModel.Navigation.cs"));
+        string surface = File.ReadAllText(Path.Combine(
+            root,
+            "src/DeskBox/Controls/WidgetContents/FileSurfaceContent.Navigation.cs"));
+        string dragPackage = File.ReadAllText(Path.Combine(
+            root,
+            "src/DeskBox/Controls/FileItemDragPackage.cs"));
+
+        Assert.Contains(
+            "NavigateIntoFolderShortcutAsync",
+            navigation,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "FolderNavigationPathPolicy.TryNormalizeShortcutTargetPath",
+            navigation,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "FolderNavigationPathPolicy.TryResolve",
+            navigation,
+            StringComparison.Ordinal);
+        Assert.Contains("await Task.Run(", navigation, StringComparison.Ordinal);
+        Assert.Contains(
+            "FolderNavigationPathPolicy.IsFolderShortcutCandidate(item)",
+            surface,
+            StringComparison.Ordinal);
+        int noOpNavigationIndex = surface.IndexOf(
+            "if (FolderNavigationPathPolicy.ArePathsEqual(",
+            StringComparison.Ordinal);
+        Assert.True(noOpNavigationIndex >= 0);
+        Assert.True(
+            surface.IndexOf(
+                "await OpenFileItemAsync(item)",
+                noOpNavigationIndex,
+                StringComparison.Ordinal) > noOpNavigationIndex);
+        Assert.Contains(
+            ".Select(item => item.Path)",
+            dragPackage,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            ".Select(item => item.TargetPath)",
+            dragPackage,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Navigation_ReturnKeepsFolderVisibleWithoutRestoringSelection()
+    {
+        string source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src/DeskBox/Controls/WidgetContents/FileSurfaceContent.Navigation.cs"));
+        int completeStart = source.IndexOf(
+            "private void CompleteFolderNavigationVisuals(", StringComparison.Ordinal);
+        int scrollStart = source.IndexOf(
+            "private void ScrollExitedFolderIntoView(", StringComparison.Ordinal);
+        int scrollEnd = source.IndexOf(
+            "private void AnimateFolderNavigation(", StringComparison.Ordinal);
+
+        Assert.True(completeStart >= 0 && scrollStart > completeStart && scrollEnd > scrollStart);
+        Assert.Contains("ClearSelection()", source[completeStart..scrollStart], StringComparison.Ordinal);
+        Assert.Contains("ScrollExitedFolderIntoView(exitedFolderPath)", source[..completeStart], StringComparison.Ordinal);
+        string scroll = source[scrollStart..scrollEnd];
+        Assert.Contains("_isDisposed || _isFolderNavigationOperationActive", scroll, StringComparison.Ordinal);
+        Assert.Contains("activeView.Items.Contains(folder)", scroll, StringComparison.Ordinal);
+        Assert.Contains("activeView.ScrollIntoView(folder)", scroll, StringComparison.Ordinal);
+        Assert.DoesNotContain("SelectedItems", scroll, StringComparison.Ordinal);
+        Assert.DoesNotContain("SelectedItem =", scroll, StringComparison.Ordinal);
+        Assert.DoesNotContain("RestoreExitedFolderSelection", source, StringComparison.Ordinal);
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

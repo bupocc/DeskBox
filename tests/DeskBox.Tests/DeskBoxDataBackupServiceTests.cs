@@ -34,6 +34,12 @@ public sealed class DeskBoxDataBackupServiceTests : IDisposable
             Path.Combine(dataDirectory, "quick-capture", "exports")).FullName;
         await File.WriteAllBytesAsync(Path.Combine(thumbnailDirectory, "cached.png"), [4, 5, 6]);
         await File.WriteAllTextAsync(Path.Combine(exportDirectory, "temporary.txt"), "temporary");
+        string glanceCacheDirectory = Directory.CreateDirectory(
+            Path.Combine(dataDirectory, "cache", "glance", "images")).FullName;
+        await File.WriteAllBytesAsync(Path.Combine(glanceCacheDirectory, "wallpaper.jpg"), [7, 8, 9]);
+        await File.WriteAllTextAsync(
+            Path.Combine(dataDirectory, "weather-cache.json"),
+            "{\"schemaVersion\":2}");
         var service = new DeskBoxDataBackupService(_appDataRoot);
 
         string backupPath = await service.ExportBackupAsync(_exportRoot);
@@ -45,6 +51,8 @@ public sealed class DeskBoxDataBackupServiceTests : IDisposable
         Assert.Null(archive.GetEntry("data/ignored.tmp"));
         Assert.Null(archive.GetEntry("data/quick-capture/thumbnails/cached.png"));
         Assert.Null(archive.GetEntry("data/quick-capture/exports/temporary.txt"));
+        Assert.Null(archive.GetEntry("data/cache/glance/images/wallpaper.jpg"));
+        Assert.Null(archive.GetEntry("data/weather-cache.json"));
         ZipArchiveEntry manifestEntry = Assert.IsType<ZipArchiveEntry>(archive.GetEntry("manifest.json"));
         string manifestJson;
         using (var reader = new StreamReader(manifestEntry.Open()))
@@ -160,6 +168,147 @@ public sealed class DeskBoxDataBackupServiceTests : IDisposable
         Assert.NotNull(secondPath);
         Assert.NotEqual(firstPath, secondPath);
         Assert.Equal(2, Directory.EnumerateFiles(service.AutomaticSnapshotDirectory, "*.zip").Count());
+    }
+
+    private static async Task SeedBackupSourceDataAsync(string appDataRoot)
+    {
+        string dataDirectory = Directory.CreateDirectory(Path.Combine(appDataRoot, "data")).FullName;
+        await File.WriteAllTextAsync(Path.Combine(dataDirectory, "settings.json"), "{}");
+    }
+
+    [Fact]
+    public async Task CreateAutomaticSnapshotIfDueAsync_SkipsWhenDisabled()
+    {
+        await SeedBackupSourceDataAsync(_appDataRoot);
+        var service = new DeskBoxDataBackupService(_appDataRoot);
+        service.UpdateAutomaticBackupOptions(new AutomaticBackupOptions(
+            IsEnabled: false,
+            IntervalMinutes: 1440,
+            RetentionCount: 7,
+            CustomDirectory: null));
+
+        string? snapshotPath = await service.CreateAutomaticSnapshotIfDueAsync();
+
+        Assert.Null(snapshotPath);
+        Assert.False(Directory.Exists(service.AutomaticSnapshotDirectory));
+
+        // "Back up now" (force) still works with the schedule disabled.
+        string? forcedPath = await service.CreateAutomaticSnapshotNowAsync();
+        Assert.NotNull(forcedPath);
+    }
+
+    [Fact]
+    public async Task CreateAutomaticSnapshotAsync_UsesCustomDirectoryWhenConfigured()
+    {
+        await SeedBackupSourceDataAsync(_appDataRoot);
+        string customDirectory = Directory.CreateDirectory(Path.Combine(_tempRoot, "usb-backups")).FullName;
+        var service = new DeskBoxDataBackupService(_appDataRoot);
+        service.UpdateAutomaticBackupOptions(new AutomaticBackupOptions(
+            IsEnabled: true,
+            IntervalMinutes: 1440,
+            RetentionCount: 7,
+            CustomDirectory: customDirectory));
+
+        string? snapshotPath = await service.CreateAutomaticSnapshotIfDueAsync();
+
+        Assert.NotNull(snapshotPath);
+        Assert.StartsWith(customDirectory, snapshotPath, StringComparison.OrdinalIgnoreCase);
+        Assert.False(Directory.Exists(service.AutomaticSnapshotDirectory));
+        Assert.Null(service.LastAutomaticSnapshotFallbackMessage);
+        Assert.Equal(customDirectory, service.GetAutomaticBackupDirectoryStatus().EffectiveDirectory);
+    }
+
+    [Fact]
+    public async Task CreateAutomaticSnapshotAsync_FallsBackToDefaultDirectoryWhenCustomDirectoryIsUnusable()
+    {
+        await SeedBackupSourceDataAsync(_appDataRoot);
+        // A file occupying the directory path makes Directory.CreateDirectory fail.
+        string blockedPath = Path.Combine(_tempRoot, "blocked");
+        await File.WriteAllTextAsync(blockedPath, "not a directory");
+        var service = new DeskBoxDataBackupService(_appDataRoot);
+        service.UpdateAutomaticBackupOptions(new AutomaticBackupOptions(
+            IsEnabled: true,
+            IntervalMinutes: 1440,
+            RetentionCount: 7,
+            CustomDirectory: blockedPath));
+
+        string? snapshotPath = await service.CreateAutomaticSnapshotIfDueAsync();
+
+        Assert.NotNull(snapshotPath);
+        Assert.StartsWith(service.AutomaticSnapshotDirectory, snapshotPath, StringComparison.OrdinalIgnoreCase);
+        Assert.NotNull(service.LastAutomaticSnapshotFallbackMessage);
+        AutomaticBackupDirectoryStatus status = service.GetAutomaticBackupDirectoryStatus();
+        Assert.Equal(service.AutomaticSnapshotDirectory, status.EffectiveDirectory);
+        Assert.False(status.IsCustomDirectoryActive);
+    }
+
+    [Fact]
+    public async Task CreateAutomaticSnapshotAsync_RejectsCustomDirectoryInsideAppDataRoot()
+    {
+        await SeedBackupSourceDataAsync(_appDataRoot);
+        var service = new DeskBoxDataBackupService(_appDataRoot);
+        service.UpdateAutomaticBackupOptions(new AutomaticBackupOptions(
+            IsEnabled: true,
+            IntervalMinutes: 1440,
+            RetentionCount: 7,
+            CustomDirectory: Path.Combine(_appDataRoot, "nested-backups")));
+
+        string? snapshotPath = await service.CreateAutomaticSnapshotIfDueAsync();
+
+        Assert.NotNull(snapshotPath);
+        Assert.StartsWith(service.AutomaticSnapshotDirectory, snapshotPath, StringComparison.OrdinalIgnoreCase);
+        Assert.False(Directory.Exists(Path.Combine(_appDataRoot, "nested-backups")));
+        Assert.False(service.IsValidCustomAutomaticBackupDirectory(
+            Path.Combine(_appDataRoot, "nested-backups"),
+            out string? rejectionReasonKey));
+        Assert.Equal(
+            "Settings.DataBackup.AutomaticBackupDirectory.InvalidInsideDataRoot",
+            rejectionReasonKey);
+    }
+
+    [Fact]
+    public async Task AutomaticSnapshot_RetentionCountIsDrivenByOptions()
+    {
+        await SeedBackupSourceDataAsync(_appDataRoot);
+        var service = new DeskBoxDataBackupService(_appDataRoot);
+        service.UpdateAutomaticBackupOptions(new AutomaticBackupOptions(
+            IsEnabled: true,
+            IntervalMinutes: 1440,
+            RetentionCount: 3,
+            CustomDirectory: null));
+
+        for (int i = 0; i < 5; i++)
+        {
+            Assert.NotNull(await service.CreateAutomaticSnapshotNowAsync());
+        }
+
+        Assert.Equal(3, Directory.EnumerateFiles(service.AutomaticSnapshotDirectory, "DeskBox-Auto-*.zip").Count());
+    }
+
+    [Fact]
+    public async Task CreateAutomaticSnapshotIfDueAsync_RespectsConfiguredInterval()
+    {
+        await SeedBackupSourceDataAsync(_appDataRoot);
+        var service = new DeskBoxDataBackupService(_appDataRoot);
+        service.UpdateAutomaticBackupOptions(new AutomaticBackupOptions(
+            IsEnabled: true,
+            IntervalMinutes: 5,
+            RetentionCount: 7,
+            CustomDirectory: null));
+
+        // A snapshot newer than 5 minutes is fresh for a 5-minute schedule...
+        string recentSnapshot = Path.Combine(service.AutomaticSnapshotDirectory, "DeskBox-Auto-20260101-000000.zip");
+        Directory.CreateDirectory(service.AutomaticSnapshotDirectory);
+        await File.WriteAllTextAsync(recentSnapshot, "placeholder");
+        File.SetLastWriteTimeUtc(recentSnapshot, DateTime.UtcNow.AddMinutes(-2));
+        Assert.Null(await service.CreateAutomaticSnapshotIfDueAsync());
+
+        // ...but stale for the default daily schedule is not enough for 5 minutes,
+        // so make it older than the configured interval.
+        File.SetLastWriteTimeUtc(recentSnapshot, DateTime.UtcNow.AddMinutes(-10));
+        string? freshSnapshot = await service.CreateAutomaticSnapshotIfDueAsync();
+        Assert.NotNull(freshSnapshot);
+        Assert.NotEqual(recentSnapshot, freshSnapshot);
     }
 
     [Fact]

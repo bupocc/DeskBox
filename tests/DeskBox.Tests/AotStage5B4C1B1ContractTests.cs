@@ -127,13 +127,13 @@ public sealed class AotStage5B4C1B1ContractTests
         Assert.Contains("DeskBoxRecycleBinRequestV1", header, StringComparison.Ordinal);
         Assert.Contains("DeskBoxRecycleBinResultV1", header, StringComparison.Ordinal);
         Assert.Contains("deskbox_recycle_bin_v1", header, StringComparison.Ordinal);
-        Assert.Contains("assert_eq!(deskbox_native_capabilities(), 511);", rust, StringComparison.Ordinal);
-        Assert.Equal(9, CountOccurrences(rust, "pub const DESKBOX_NATIVE_CAPABILITY_"));
+        Assert.Contains("assert_eq!(deskbox_native_capabilities(), 1023);", rust, StringComparison.Ordinal);
+        Assert.Equal(10, CountOccurrences(rust, "pub const DESKBOX_NATIVE_CAPABILITY_"));
         Assert.Equal(10, CountOccurrences(rust, "#[unsafe(no_mangle)]"));
         Assert.Contains("RecycleBinCapability = 1UL << 8", managed, StringComparison.Ordinal);
         Assert.Contains("deskbox_recycle_bin_v1", managed, StringComparison.Ordinal);
         Assert.Contains("result.Reserved5 != 0", managed, StringComparison.Ordinal);
-        Assert.Contains("expected 511", build, StringComparison.Ordinal);
+        Assert.Contains("expected 1023", build, StringComparison.Ordinal);
         Assert.Contains("deskbox_recycle_bin_v1", build, StringComparison.Ordinal);
     }
 
@@ -244,19 +244,19 @@ public sealed class AotStage5B4C1B1ContractTests
         string launcher = ReadRepositoryFile("scripts/start-aot-preview.ps1");
         string project = ReadRepositoryFile("src/DeskBox/DeskBox.csproj");
         string report = ReadRepositoryFile(
-            "docs/architecture/aot-stage-5b-4c1b1-report.md");
+            "docs/architecture/stage-reports/aot-stage-5b-4c1b1-report.md");
         string abi = ReadRepositoryFile(
             "docs/architecture/recycle-bin-native-abi-v1.md");
         string roadmap = ReadRepositoryFile(
             "docs/architecture/rust-native-aot-roadmap.md");
 
-        Assert.Contains("$auditProfileVersion = 58", audit, StringComparison.Ordinal);
+        Assert.Contains("$auditProfileVersion = 62", audit, StringComparison.Ordinal);
         Assert.Contains("schemaVersion = 55", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C1B1", audit, StringComparison.Ordinal);
-        Assert.Contains("$RequiredAuditProfileVersion = 58", launcher, StringComparison.Ordinal);
+        Assert.Contains("$RequiredAuditProfileVersion = 62", launcher, StringComparison.Ordinal);
         Assert.Contains("$RequiredSummarySchemaVersion = 55", launcher, StringComparison.Ordinal);
-        Assert.Contains("$RequiredRustCapabilities = 511", launcher, StringComparison.Ordinal);
-        Assert.Contains("$RequiredRustExportCount = 10", launcher, StringComparison.Ordinal);
+        Assert.Contains("$RequiredRustCapabilities = 1023", launcher, StringComparison.Ordinal);
+        Assert.Contains("$RequiredRustExportCount = 11", launcher, StringComparison.Ordinal);
         Assert.Contains("stage 5B-4C3B2B1", project, StringComparison.Ordinal);
         Assert.Contains("Recycle Bin", project, StringComparison.Ordinal);
         Assert.Contains("5B-4C1B1 已完成", report, StringComparison.Ordinal);

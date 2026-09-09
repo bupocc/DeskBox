@@ -693,6 +693,7 @@ public sealed partial class WidgetManager
             WidgetKind.Music => "Music.Title",
             WidgetKind.Search => "Search.Title",
             WidgetKind.Glance => "Glance.Title",
+            WidgetKind.Pomodoro => "Pomodoro.Title",
             WidgetKind.Tags => "Tags.Title",
             WidgetKind.SystemMonitor => "SystemMonitor.Title",
             _ => null
@@ -1560,12 +1561,15 @@ public sealed partial class WidgetManager
 
     public async Task<bool> ReorderWidgetGroupMemberAsync(
         string sourceWidgetId,
-        string targetWidgetId)
+        string targetWidgetId,
+        string? expectedGroupId = null,
+        IReadOnlyList<string>? expectedMemberIds = null)
     {
         if (!HasUiThreadAccess())
         {
             return await RunOnUiThreadAsync(
-                () => ReorderWidgetGroupMemberAsync(sourceWidgetId, targetWidgetId));
+                () => ReorderWidgetGroupMemberAsync(
+                    sourceWidgetId, targetWidgetId, expectedGroupId, expectedMemberIds));
         }
 
         await _widgetGroupGate.WaitAsync();
@@ -1576,7 +1580,10 @@ public sealed partial class WidgetManager
                 sourceWidgetId);
             if (group is null ||
                 !group.MemberIds.Contains(targetWidgetId, StringComparer.Ordinal) ||
-                string.Equals(sourceWidgetId, targetWidgetId, StringComparison.Ordinal))
+                string.Equals(sourceWidgetId, targetWidgetId, StringComparison.Ordinal) ||
+                (expectedGroupId is not null && group.Id != expectedGroupId) ||
+                (expectedMemberIds is not null &&
+                 !group.MemberIds.SequenceEqual(expectedMemberIds, StringComparer.Ordinal)))
             {
                 return false;
             }
@@ -1584,16 +1591,18 @@ public sealed partial class WidgetManager
             // Move the source into the target's original slot. This makes
             // adjacent keyboard/menu moves symmetric in both directions and
             // gives drag/drop a stable, deterministic destination.
-            if (!WidgetGroupOrder.MoveToTargetSlot(
+            try
+            {
+                return await WidgetGroupOrder.MoveAndSaveAsync(
                     group.MemberIds,
                     sourceWidgetId,
-                    targetWidgetId))
-            {
-                return false;
+                    targetWidgetId,
+                    () => _settingsService.SaveCheckedAsync());
             }
-            await _settingsService.SaveAsync();
-            RaiseWidgetGroupsChanged();
-            return true;
+            finally
+            {
+                RaiseWidgetGroupsChanged();
+            }
         }
         finally
         {
@@ -1834,6 +1843,7 @@ public sealed partial class WidgetManager
             Height = source.Height,
             IsPositionLocked = source.IsPositionLocked,
             IsSizeLocked = source.IsSizeLocked,
+            IsAlwaysOnTop = source.IsAlwaysOnTop,
             IsCollapsed = source.IsCollapsed,
             CompactPlacement = CloneCompactPlacement(source.CompactPlacement),
             CompactWidth = source.CompactWidth,
@@ -1861,6 +1871,7 @@ public sealed partial class WidgetManager
         group.Height = member.Height;
         group.IsPositionLocked = member.IsPositionLocked;
         group.IsSizeLocked = member.IsSizeLocked;
+        group.IsAlwaysOnTop = member.IsAlwaysOnTop;
         group.IsCollapsed = member.IsCollapsed;
         group.CompactPlacement = CloneCompactPlacement(member.CompactPlacement);
         group.CompactWidth = member.CompactWidth;
@@ -1892,6 +1903,7 @@ public sealed partial class WidgetManager
         member.Height = group.Height;
         member.IsPositionLocked = group.IsPositionLocked;
         member.IsSizeLocked = group.IsSizeLocked;
+        member.IsAlwaysOnTop = group.IsAlwaysOnTop;
         member.IsCollapsed = group.IsCollapsed;
         member.CompactPlacement = CloneCompactPlacement(group.CompactPlacement);
         member.CompactWidth = group.CompactWidth;
@@ -2665,6 +2677,7 @@ public sealed partial class WidgetManager
             private readonly bool _isVisible;
             private readonly bool _isPositionLocked;
             private readonly bool _isSizeLocked;
+            private readonly bool _isAlwaysOnTop;
             private readonly bool _isCollapsed;
             private readonly WidgetCompactPlacement? _compactPlacement;
             private readonly double? _compactWidth;
@@ -2687,6 +2700,7 @@ public sealed partial class WidgetManager
                 _isVisible = config.IsVisible;
                 _isPositionLocked = config.IsPositionLocked;
                 _isSizeLocked = config.IsSizeLocked;
+                _isAlwaysOnTop = config.IsAlwaysOnTop;
                 _isCollapsed = config.IsCollapsed;
                 _compactPlacement = CloneCompactPlacement(config.CompactPlacement);
                 _compactWidth = config.CompactWidth;
@@ -2711,6 +2725,7 @@ public sealed partial class WidgetManager
                 _config.IsVisible = _isVisible;
                 _config.IsPositionLocked = _isPositionLocked;
                 _config.IsSizeLocked = _isSizeLocked;
+                _config.IsAlwaysOnTop = _isAlwaysOnTop;
                 _config.IsCollapsed = _isCollapsed;
                 _config.CompactPlacement = CloneCompactPlacement(_compactPlacement);
                 _config.CompactWidth = _compactWidth;

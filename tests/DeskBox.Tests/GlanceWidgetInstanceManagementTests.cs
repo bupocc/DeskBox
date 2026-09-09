@@ -39,6 +39,7 @@ public sealed class GlanceWidgetInstanceManagementTests
         Assert.False(WidgetManager.RequiresSingletonFeatureWidgetConfig(WidgetKind.File));
         Assert.True(WidgetManager.RequiresSingletonFeatureWidgetConfig(WidgetKind.Weather));
         Assert.True(WidgetManager.RequiresSingletonFeatureWidgetConfig(WidgetKind.Music));
+        Assert.True(WidgetManager.RequiresSingletonFeatureWidgetConfig(WidgetKind.Pomodoro));
     }
 
     [Fact]
@@ -71,7 +72,7 @@ public sealed class GlanceWidgetInstanceManagementTests
     {
         string windowCommands = File.ReadAllText(TestPaths.FromRepository(
             "src/DeskBox/Views/ContentWidgetWindow.Commands.cs"));
-        string featureWidgets = File.ReadAllText(TestPaths.FromRepository(
+        string featureWidgets = File.ReadAllText(TestPaths.SourceFile(
             "src/DeskBox/Services/WidgetManager.FeatureWidgets.cs"));
         using JsonDocument chineseStrings = JsonDocument.Parse(File.ReadAllText(
             TestPaths.FromRepository("src/DeskBox/Strings/zh-CN.json")));

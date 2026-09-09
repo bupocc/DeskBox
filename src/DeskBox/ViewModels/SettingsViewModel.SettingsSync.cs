@@ -51,6 +51,7 @@ public partial class SettingsViewModel
 
             AutoCheckForUpdates = settings.AutoCheckForUpdates;
             DoubleClickToOpen = settings.DoubleClickToOpen;
+            FileItemSystemContextMenuEnabled = settings.FileItemSystemContextMenuEnabled;
             SelectedFileWidgetFolderOpenBehavior =
                 FileWidgetFolderOpenBehaviorNames.NormalizeGlobal(
                     settings.FileWidgetFolderOpenBehavior);
@@ -132,6 +133,7 @@ public partial class SettingsViewModel
             ShowFileExtensions = settings.ShowFileExtensions;
             HideShortcutExtensionWhenShowingFileExtensions = settings.HideShortcutExtensionWhenShowingFileExtensions;
             IdleWorkingSetTrimEnabled = settings.IdleWorkingSetTrimEnabled;
+            ImmediateHiddenWorkingSetTrimEnabled = settings.ImmediateHiddenWorkingSetTrimEnabled;
 
             ApplyContentEditorSettingsSnapshot(settings);
             ApplyFileStackSettingsSnapshot(settings);
@@ -141,6 +143,10 @@ public partial class SettingsViewModel
             QuickCaptureImageClipboardEnabled = settings.QuickCaptureImageClipboardEnabled;
             QuickCaptureRecentLimit = QuickCaptureService.NormalizeRecentLimit(settings.QuickCaptureRecentLimit);
             QuickCaptureShowCreatedTime = settings.QuickCaptureShowCreatedTime;
+            QuickCaptureListTextSize = SettingsService.NormalizeTextSize(
+                (settings.QuickCaptureListTextSize > 0 ? settings.QuickCaptureListTextSize : settings.TextSize));
+            QuickCaptureContentTextSize = SettingsService.NormalizeTextSize(
+                (settings.QuickCaptureContentTextSize > 0 ? settings.QuickCaptureContentTextSize : settings.TextSize));
             SelectedAttachmentStorageMode = SettingsService.NormalizeAttachmentStorageMode(settings.AttachmentStorageMode);
             ApplyPerformanceSettingsSnapshot(settings);
             SelectedManagedDropAction = settings.ManagedDropAction switch
@@ -168,6 +174,10 @@ public partial class SettingsViewModel
             TodoShowImportantTab = settings.TodoShowImportantTab;
             TodoShowCompletedTab = settings.TodoShowCompletedTab;
             TodoShowCompletedTasks = settings.TodoShowCompletedTasks;
+            TodoListTextSize = SettingsService.NormalizeTextSize(
+                (settings.TodoListTextSize > 0 ? settings.TodoListTextSize : settings.TextSize));
+            TodoContentTextSize = SettingsService.NormalizeTextSize(
+                (settings.TodoContentTextSize > 0 ? settings.TodoContentTextSize : settings.TextSize));
             TodoShowFooterStats = settings.TodoShowFooterStats;
             TodoShowClearCompletedButton = settings.TodoShowClearCompletedButton;
             SelectedTodoLayoutMode = SettingsService.NormalizeTodoLayoutMode(
@@ -182,9 +192,10 @@ public partial class SettingsViewModel
             SelectedTodoReminderOffsetMinutes = SettingsService.NormalizeTodoReminderOffsetMinutes(
                 settings.TodoDefaultReminderOffsetMinutes);
 
-            MusicUseArtworkBackdrop = settings.MusicUseArtworkBackdrop;
-            MusicEnableCoverHoverMotion = settings.MusicEnableCoverHoverMotion;
-            SelectedMusicDisplayMode = SettingsService.NormalizeMusicDisplayMode(settings.MusicDisplayMode);
+            var musicSettingsSnapshot = _musicSettingsStore.Load();
+            MusicUseArtworkBackdrop = musicSettingsSnapshot.UseArtworkBackdrop;
+            MusicEnableCoverHoverMotion = musicSettingsSnapshot.EnableCoverHoverMotion;
+            SelectedMusicDisplayMode = SettingsService.NormalizeMusicDisplayMode(musicSettingsSnapshot.DisplayMode);
 
             WeatherAutoLocation = settings.WeatherAutoLocation;
             WeatherCityName = settings.WeatherCityName;
@@ -217,6 +228,13 @@ public partial class SettingsViewModel
                 SettingsService.WeatherRefreshMaxMinutes);
 
             ManagedStorageRootPath = SettingsService.NormalizeManagedStorageRootPath(settings.DefaultManagedStorageRootPath);
+            AutomaticBackupEnabled = settings.AutomaticBackupEnabled;
+            SelectedAutomaticBackupIntervalMinutes = DataBackupSettingsPolicy.NormalizeIntervalMinutes(
+                settings.AutomaticBackupIntervalMinutes);
+            SelectedAutomaticBackupRetentionCount = DataBackupSettingsPolicy.NormalizeRetentionCount(
+                settings.AutomaticBackupRetentionCount);
+            AutomaticBackupDirectory =
+                DataBackupSettingsPolicy.NormalizeCustomDirectory(settings.AutomaticBackupDirectory) ?? string.Empty;
             GlobalHotkeyEnabled = settings.GlobalHotkeyEnabled;
         }
         finally
@@ -334,6 +352,8 @@ RefreshWeatherCityPopularCities();
             _cachedWeatherSkinDisplayNames = null;
             _cachedWeatherRefreshIntervalDisplayNames = null;
             _cachedManagedDropActionDisplayNames = null;
+            _cachedAutomaticBackupIntervalDisplayNames = null;
+            _cachedAutomaticBackupRetentionDisplayNames = null;
             OnPropertyChanged(nameof(AvailableThemeDisplayNames));
             OnPropertyChanged(nameof(AvailableTrayIconStyleDisplayNames));
             OnPropertyChanged(nameof(AvailableLanguageDisplayNames));
@@ -366,6 +386,8 @@ RefreshWeatherCityPopularCities();
             OnPropertyChanged(nameof(AvailableTodoNewTaskPositionDisplayNames));
             OnPropertyChanged(nameof(AvailableAttachmentStorageModeDisplayNames));
             OnPropertyChanged(nameof(AvailableManagedDropActionDisplayNames));
+            OnPropertyChanged(nameof(AvailableAutomaticBackupIntervalDisplayNames));
+            OnPropertyChanged(nameof(AvailableAutomaticBackupRetentionDisplayNames));
             OnPropertyChanged(nameof(AvailableTodoDefaultFilterDisplayNames));
             OnPropertyChanged(nameof(AvailableTodoTabStyleDisplayNames));
             OnPropertyChanged(nameof(AvailableTodoReminderOffsetDisplayNames));

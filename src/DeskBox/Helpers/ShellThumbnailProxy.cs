@@ -14,7 +14,8 @@ internal static class ShellThumbnailProxy
     private enum ShellImageMode
     {
         Thumbnail,
-        Icon
+        Icon,
+        IconWithOverlays
     }
 
     private readonly record struct BitmapPayloadInfo(
@@ -75,9 +76,15 @@ internal static class ShellThumbnailProxy
 
     public static async Task<byte[]?> TryLoadIconAsync(
         string path,
-        int requestedSize)
+        int requestedSize,
+        bool includeOverlays = false)
     {
-        return await TryLoadAsync(path, requestedSize, ShellImageMode.Icon);
+        return await TryLoadAsync(
+            path,
+            requestedSize,
+            includeOverlays
+                ? ShellImageMode.IconWithOverlays
+                : ShellImageMode.Icon);
     }
 
     private static async Task<byte[]?> TryLoadAsync(
@@ -118,9 +125,12 @@ internal static class ShellThumbnailProxy
             RedirectStandardError = true,
             CreateNoWindow = true
         };
-        if (mode == ShellImageMode.Icon)
+        if (mode is ShellImageMode.Icon or ShellImageMode.IconWithOverlays)
         {
-            startInfo.ArgumentList.Add("--icon-only");
+            startInfo.ArgumentList.Add(
+                mode == ShellImageMode.IconWithOverlays
+                    ? "--icon-with-overlays"
+                    : "--icon-only");
         }
 
         startInfo.ArgumentList.Add(normalizedPath);
@@ -195,14 +205,14 @@ internal static class ShellThumbnailProxy
             return null;
         }
 
-        if (mode == ShellImageMode.Icon)
+        if (mode is ShellImageMode.Icon or ShellImageMode.IconWithOverlays)
         {
             byte[]? normalizedOutput = NormalizeIconPayload(output);
             if (normalizedOutput is null)
             {
                 RecordFailure(failureKey);
                 App.LogVerbose(
-                    $"[ShellThumbnailProxy] Unable to normalize shortcut icon " +
+                    $"[ShellThumbnailProxy] Unable to normalize Shell-item icon " +
                     $"path={normalizedPath}");
                 return null;
             }
@@ -210,7 +220,7 @@ internal static class ShellThumbnailProxy
             if (normalizedOutput.Length != output.Length)
             {
                 App.LogVerbose(
-                    $"[ShellThumbnailProxy] Cropped padded shortcut icon " +
+                    $"[ShellThumbnailProxy] Cropped padded Shell-item icon " +
                     $"path={normalizedPath}");
             }
 
@@ -229,6 +239,9 @@ internal static class ShellThumbnailProxy
             out _);
         s_recentFailures.TryRemove(
             BuildFailureKey(normalizedPath, ShellImageMode.Icon),
+            out _);
+        s_recentFailures.TryRemove(
+            BuildFailureKey(normalizedPath, ShellImageMode.IconWithOverlays),
             out _);
     }
 
@@ -275,30 +288,48 @@ internal static class ShellThumbnailProxy
         extension.Equals(".lnk", StringComparison.OrdinalIgnoreCase) ||
         extension.Equals(".url", StringComparison.OrdinalIgnoreCase);
 
-    private static async Task<byte[]> ReadBoundedOutputAsync(
+    internal static async Task<byte[]> ReadBoundedOutputAsync(
         Stream stream,
         int maximumBytes)
     {
-        using var output = new MemoryStream();
-        byte[] buffer = new byte[16 * 1024];
-        while (true)
+        // The native proxy emits one BMP with its total length in the file
+        // header. Read directly into the final array to avoid MemoryStream's
+        // growth buffers and the additional full-size ToArray copy.
+        byte[] header = new byte[14];
+        int headerBytes = await stream.ReadAtLeastAsync(
+            header,
+            header.Length,
+            throwOnEndOfStream: false).ConfigureAwait(false);
+        if (headerBytes == 0)
         {
-            int read = await stream.ReadAsync(buffer);
-            if (read == 0)
-            {
-                break;
-            }
-
-            if (output.Length + read > maximumBytes)
-            {
-                throw new InvalidDataException(
-                    "The thumbnail proxy payload exceeded its limit.");
-            }
-
-            await output.WriteAsync(buffer.AsMemory(0, read));
+            return [];
         }
 
-        return output.ToArray();
+        if (headerBytes != header.Length ||
+            header[0] != (byte)'B' || header[1] != (byte)'M')
+        {
+            throw new InvalidDataException(
+                "The thumbnail proxy returned an invalid bitmap header.");
+        }
+
+        uint declaredSize = BitConverter.ToUInt32(header, 2);
+        if (declaredSize < 138 || declaredSize > maximumBytes)
+        {
+            throw new InvalidDataException(
+                "The thumbnail proxy payload size was outside its limit.");
+        }
+
+        byte[] output = new byte[(int)declaredSize];
+        header.CopyTo(output, 0);
+        await stream.ReadExactlyAsync(
+            output.AsMemory(header.Length)).ConfigureAwait(false);
+        if (await stream.ReadAsync(header.AsMemory(0, 1)).ConfigureAwait(false) != 0)
+        {
+            throw new InvalidDataException(
+                "The thumbnail proxy returned data beyond its bitmap payload.");
+        }
+
+        return output;
     }
 
     internal static bool IsVisibleBitmapPayload(byte[] bytes)

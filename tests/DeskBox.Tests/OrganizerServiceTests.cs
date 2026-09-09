@@ -63,6 +63,32 @@ public sealed class OrganizerServiceTests : IDisposable
         Assert.Equal("Copy", history.TransferMode);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OrganizeDropAsync_SameDirectoryIsNoOpWithoutNumberedDuplicate(
+        bool move)
+    {
+        string targetDirectory = Directory.CreateDirectory(
+            Path.Combine(_tempRoot, "same-directory")).FullName;
+        string sourcePath = Path.Combine(targetDirectory, "note.txt");
+        File.WriteAllText(sourcePath, "content");
+        WidgetConfig widget = CreateWidget(targetDirectory);
+
+        OrganizationHistoryEntry history =
+            await _organizerService.OrganizeDropAsync(
+                widget,
+                "Widget",
+                [sourcePath],
+                move);
+
+        Assert.Empty(history.Items);
+        Assert.False(history.CanUndo);
+        Assert.True(File.Exists(sourcePath));
+        Assert.False(File.Exists(Path.Combine(targetDirectory, "note (2).txt")));
+        Assert.Empty(_settingsService.Settings.RecentOrganizationHistory);
+    }
+
     [Fact]
     public async Task OrganizeDropAsync_DoesNotBroadcastGlobalSettingsChanged()
     {

@@ -42,8 +42,10 @@ public sealed partial class ContentWidgetWindow : WidgetWindowBase, IDesktopWidg
     private bool _isHidePrepared;
     private bool _isCommittingTitleRename;
     private bool _isCancellingTitleRename;
+    private long _titleRenameOpenedAtTick;
     private bool _compactPresentationRefreshQueued;
     private INotifyPropertyChanged? _compactPresentationSource;
+    private PomodoroWidgetViewModel? _pomodoroAlertSource;
     private IWidgetFeedbackSource? _feedbackSource;
     private IWidgetHostContextMenuSource? _hostContextMenuSource;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _autoRestoreTimer;
@@ -148,6 +150,8 @@ public sealed partial class ContentWidgetWindow : WidgetWindowBase, IDesktopWidg
                 CreateQuickCaptureCompactPresentation(quickCapture, contentMode),
             WeatherWidgetContentAdapter weather => CreateWeatherCompactPresentation(weather, contentMode),
             SearchWidgetContentAdapter => CreateSearchCompactPresentation(contentMode, localization),
+            PomodoroWidgetContentAdapter pomodoro =>
+                CreatePomodoroCompactPresentation(pomodoro, contentMode),
             _ => new WidgetCompactPresentation(
                 _titleViewModel.DisplayName,
                 string.Empty,
@@ -254,10 +258,72 @@ public sealed partial class ContentWidgetWindow : WidgetWindowBase, IDesktopWidg
             localization.T("Widget.Compact.DropHint"),
             ShowPrimaryAction: true,
             PrimaryActionGlyph: "\uE721",
+            PrimaryActionLabel: localization.T("Search.Title"),
             UseStackedText: stacked,
             EnableMarquee: true,
             LiveStateKey: string.Join("|", _titleViewModel.DisplayName, recentKey));
     }
+
+    private WidgetCompactPresentation CreatePomodoroCompactPresentation(
+        PomodoroWidgetContentAdapter pomodoro,
+        string contentMode)
+    {
+        PomodoroWidgetViewModel viewModel = pomodoro.ViewModel;
+        bool showSummary = contentMode != SettingsService.WidgetCompactContentModeMinimal;
+        Windows.UI.Color accent = GetPomodoroPhaseAccent(viewModel.Phase);
+
+        return new WidgetCompactPresentation(
+            viewModel.CountdownText,
+            showSummary
+                ? $"{viewModel.PhaseText} · {viewModel.RoundSummaryText}"
+                : string.Empty,
+            _descriptor.DefaultGlyph,
+            string.Empty,
+            ShowPrimaryAction: true,
+            PrimaryActionGlyph: viewModel.PrimaryActionGlyph,
+            PrimaryActionLabel: viewModel.PrimaryActionText,
+            IsPlaying: viewModel.IsRunning,
+            UseStackedText: showSummary,
+            EnableMarquee: false,
+            Progress: viewModel.Progress,
+            LiveStateKey: string.Join(
+                "|",
+                viewModel.Phase,
+                viewModel.IsRunning,
+                viewModel.RoundNumber,
+                viewModel.RoundCount,
+                viewModel.PhaseText,
+                viewModel.RoundSummaryText,
+                viewModel.PrimaryActionText),
+            BadgeText: showSummary
+                ? $"{viewModel.RoundNumber}/{viewModel.RoundCount}"
+                : string.Empty,
+            BackgroundColorStart: Windows.UI.Color.FromArgb(
+                34,
+                accent.R,
+                accent.G,
+                accent.B),
+            BackgroundColorEnd: Windows.UI.Color.FromArgb(
+                8,
+                accent.R,
+                accent.G,
+                accent.B),
+            EdgeGlowColor: accent,
+            IconColor: accent,
+            IsLiveTextUpdate: true);
+    }
+
+    private static Windows.UI.Color GetPomodoroPhaseAccent(
+        PomodoroTimerPhase phase) => phase switch
+        {
+            PomodoroTimerPhase.Focus =>
+                Windows.UI.Color.FromArgb(255, 244, 123, 103),
+            PomodoroTimerPhase.ShortBreak =>
+                Windows.UI.Color.FromArgb(255, 112, 174, 139),
+            PomodoroTimerPhase.LongBreak =>
+                Windows.UI.Color.FromArgb(255, 87, 150, 166),
+            _ => throw new ArgumentOutOfRangeException(nameof(phase), phase, null)
+        };
 
     private WidgetCompactPresentation CreateMusicCompactPresentation(
         MusicWidgetContentAdapter music,
@@ -408,7 +474,8 @@ public sealed partial class ContentWidgetWindow : WidgetWindowBase, IDesktopWidg
 
         return presentation with
         {
-            EnableMarquee = true,
+            // Todo text can be arbitrarily long; the capsule stays static
+            // instead of marqueeing (same policy as QuickCapture).
             Progress = totalCount > 0
                 ? completedCount / (double)totalCount
                 : null,
@@ -513,6 +580,12 @@ public sealed partial class ContentWidgetWindow : WidgetWindowBase, IDesktopWidg
 
     protected override async Task OnCompactPrimaryActionRequestedAsync()
     {
+        if (CurrentContent is PomodoroWidgetContentAdapter pomodoro)
+        {
+            pomodoro.ViewModel.StartPause();
+            return;
+        }
+
         if (CurrentContent is SearchWidgetContentAdapter)
         {
             App.Current.OpenSearchPopup();
@@ -662,6 +735,10 @@ public sealed partial class ContentWidgetWindow : WidgetWindowBase, IDesktopWidg
             dividerColor);
         ContentWidgetShell.TitleIconAccentColor = iconForeground;
         ContentWidgetShell.TitleIconMode = SettingsService.Settings.WidgetTitleIconMode;
+        if (_pomodoroAlertSource is not null)
+        {
+            ApplyPomodoroAttention(_pomodoroAlertSource);
+        }
     }
 
     protected override void OnRootElementLoaded()
@@ -689,9 +766,14 @@ public sealed partial class ContentWidgetWindow : WidgetWindowBase, IDesktopWidg
 
     public void ApplyAppearancePreview()
     {
+        ApplyAppearancePreview(invalidateContent: true);
+    }
+
+    private void ApplyAppearancePreview(bool invalidateContent)
+    {
         if (!DispatcherQueue.HasThreadAccess)
         {
-            DispatcherQueue.TryEnqueue(ApplyAppearancePreview);
+            DispatcherQueue.TryEnqueue(() => ApplyAppearancePreview(invalidateContent));
             return;
         }
 
@@ -705,7 +787,7 @@ public sealed partial class ContentWidgetWindow : WidgetWindowBase, IDesktopWidg
         ApplyBackdropPreference();
         ContentWidgetShell.ShowHoverButtons = SettingsService.Settings.ShowHoverButtons;
         ApplyTitleBarLayout();
-        _contentHost.ApplyAppearance();
+        _contentHost.ApplyAppearance(invalidate: invalidateContent);
     }
 
     public void SetTrayAnimationOffsetOverride(double? offsetX, double? offsetY)
@@ -745,31 +827,36 @@ return PrepareTrayShowAnimationCore(restoreBoundsForCurrentTopology: true);
 
 private bool PrepareTrayShowAnimationCore(bool restoreBoundsForCurrentTopology)
 {
-SetTrayHideInputSuppressed(false);
-TrayAnimation.NextGeneration();
-TrayAnimation.StopAndRestoreWindowPosition();
-TrayAnimation.CloakWindowForTrayShow();
-_isHidePrepared = false;
-IsHideAnimationRunning = false;
+        bool boundsRestored = false;
+        bool prepared = WidgetTrayAnimationPreparation.TryPrepare(() =>
+        {
+            SetTrayHideInputSuppressed(false);
+            TrayAnimation.NextGeneration();
+            TrayAnimation.StopAndRestoreWindowPosition();
+            TrayAnimation.CloakWindowForTrayShow();
+            _isHidePrepared = false;
+            IsHideAnimationRunning = false;
 
-        // A group detach changes this persistent HWND's topology identity.
-        // Retarget it only after DWM cloak is active and before preparing the
-        // animation offset; otherwise TryRestoreBounds sees an active position
-        // transition and intentionally skips the move.
-        bool boundsRestored = !restoreBoundsForCurrentTopology ||
-            TryRestoreBoundsForCurrentTopology(allowHidden: true);
+            // A group detach changes this persistent HWND's topology identity.
+            // Retarget it only after DWM cloak is active and before preparing the
+            // animation offset; otherwise TryRestoreBounds sees an active position
+            // transition and intentionally skips the move.
+            boundsRestored = !restoreBoundsForCurrentTopology ||
+                TryRestoreBoundsForCurrentTopology(allowHidden: true);
 
-        var profile = GetTrayAnimationProfile();
-        LogTrayWindow(
-            $"PrepareShow gen={TrayAnimation.Generation} topologyRetarget={restoreBoundsForCurrentTopology} " +
-            $"boundsRestored={boundsRestored} effect={SettingsService.Settings.WidgetAnimationEffect} " +
-            $"speed={SettingsService.Settings.WidgetAnimationSpeed} enabled={profile.IsEnabled} durationMs={profile.DurationMs}");
-        TrayAnimation.PrepareVisualState(
-            profile.ShowOffsetX,
-            profile.ShowOffsetY,
-            profile.ShowStartOpacity,
-            profile.ShowStartScale);
-        return boundsRestored;
+            var profile = GetTrayAnimationProfile();
+            LogTrayWindow(
+                $"PrepareShow gen={TrayAnimation.Generation} topologyRetarget={restoreBoundsForCurrentTopology} " +
+                $"boundsRestored={boundsRestored} effect={SettingsService.Settings.WidgetAnimationEffect} " +
+                $"speed={SettingsService.Settings.WidgetAnimationSpeed} enabled={profile.IsEnabled} durationMs={profile.DurationMs}");
+            TrayAnimation.PrepareVisualState(
+                profile.ShowOffsetX,
+                profile.ShowOffsetY,
+                profile.ShowStartOpacity,
+                profile.ShowStartScale);
+        }, CompleteTrayShowWithoutAnimation,
+            ex => LogTrayWindow($"PrepareShow failed: {ex.Message}"));
+        return prepared && boundsRestored;
     }
 
     public void ShowPreparedAtDesktopLayer(bool persistVisibility = true)
@@ -795,14 +882,19 @@ IsHideAnimationRunning = false;
 
     public void CompleteTrayShowWithoutAnimation()
     {
+        IsHideAnimationRunning = false;
+        _isHidePrepared = false;
+        SetTrayHideInputSuppressed(false);
         TrayAnimation.NextGeneration();
         LogTrayWindow($"CompleteShowWithoutAnimation gen={TrayAnimation.Generation}");
         TrayAnimation.Stop();
         SetTrayAnimationOffsetOverride(null, null);
         TrayAnimation.RestoreVisualState();
-        TrayAnimation.RestoreWindowPosition();
-        TrayAnimation.RevealWindowForTrayShow();
-        NotifyVisibleContentRevealCompleted();
+        WidgetTrayAnimationPreparation.CompleteShow(
+            TrayAnimation.RestoreWindowPosition,
+            TrayAnimation.RevealWindowForTrayShow,
+            NotifyVisibleContentRevealCompleted,
+            ex => LogTrayWindow($"CompleteShowWithoutAnimation cleanup failed: {ex.Message}"));
     }
 
     public void RevealFromTray(bool autoRestore = true)
@@ -892,8 +984,10 @@ IsHideAnimationRunning = true;
         UpdatePersistedVisibility(isVisible: false, persistVisibility);
 
         LogTrayWindow($"PrepareHide gen={TrayAnimation.Generation}");
-        TrayAnimation.PrepareVisualState(0, 0, WidgetTrayAnimationController.RestingOpacity, WidgetTrayAnimationController.RestingScale);
-        return true;
+        return WidgetTrayAnimationPreparation.TryPrepare(
+            () => TrayAnimation.PrepareVisualState(0, 0, WidgetTrayAnimationController.RestingOpacity, WidgetTrayAnimationController.RestingScale),
+            CompleteTrayHideAnimation,
+            ex => LogTrayWindow($"PrepareHide failed: {ex.Message}"));
     }
 
     public void PlayPreparedTrayHideAnimation()
@@ -1099,6 +1193,7 @@ IsHideAnimationRunning = true;
             MusicWidgetContentAdapter music => music.ViewModel,
             WeatherWidgetContentAdapter weather => weather.ViewModel,
             QuickCaptureSurfaceContent quickCapture => quickCapture.ViewModel,
+            PomodoroWidgetContentAdapter pomodoro => pomodoro.ViewModel,
             _ => null
         };
 
@@ -1106,6 +1201,8 @@ IsHideAnimationRunning = true;
         {
             _compactPresentationSource.PropertyChanged += CompactPresentationSource_PropertyChanged;
         }
+
+        AttachPomodoroAlertSource(content);
 
         // The search capsule's dynamic subtitle ("最近：xxx") tracks the recent-query
         // list, which has no INotifyPropertyChanged surface, so subscribe to the
@@ -1128,6 +1225,88 @@ IsHideAnimationRunning = true;
 
             historyService.RecentQueriesChanged += OnRecentQueriesChanged;
             _subscribedSearchHistoryService = historyService;
+        }
+    }
+
+    private void AttachPomodoroAlertSource(IWidgetContent content)
+    {
+        if (_pomodoroAlertSource is not null)
+        {
+            _pomodoroAlertSource.PropertyChanged -=
+                PomodoroAlertSource_PropertyChanged;
+            _pomodoroAlertSource.CompletionOccurred -=
+                PomodoroAlertSource_CompletionOccurred;
+        }
+
+        _pomodoroAlertSource = content is PomodoroWidgetContentAdapter pomodoro
+            ? pomodoro.ViewModel
+            : null;
+        if (_pomodoroAlertSource is null)
+        {
+            ContentWidgetShell.SetPersistentAttention(false, Colors.Transparent);
+            return;
+        }
+
+        _pomodoroAlertSource.PropertyChanged +=
+            PomodoroAlertSource_PropertyChanged;
+        _pomodoroAlertSource.CompletionOccurred +=
+            PomodoroAlertSource_CompletionOccurred;
+        ApplyPomodoroAttention(_pomodoroAlertSource);
+    }
+
+    private void PomodoroAlertSource_PropertyChanged(
+        object? sender,
+        PropertyChangedEventArgs e)
+    {
+        if (sender is not PomodoroWidgetViewModel viewModel ||
+            !ReferenceEquals(viewModel, _pomodoroAlertSource))
+        {
+            return;
+        }
+
+        if (string.IsNullOrEmpty(e.PropertyName) ||
+            e.PropertyName is nameof(PomodoroWidgetViewModel.Phase) or
+                nameof(PomodoroWidgetViewModel.IsCompletionAlertActive))
+        {
+            ApplyPomodoroAttention(viewModel);
+        }
+    }
+
+    private void ApplyPomodoroAttention(PomodoroWidgetViewModel viewModel)
+    {
+        ContentWidgetShell.SetPersistentAttention(
+            viewModel.IsCompletionAlertActive,
+            GetPomodoroPhaseAccent(viewModel.Phase));
+    }
+
+    private void PomodoroAlertSource_CompletionOccurred(
+        object? sender,
+        EventArgs e)
+    {
+        if (sender is not PomodoroWidgetViewModel viewModel ||
+            !ReferenceEquals(viewModel, _pomodoroAlertSource))
+        {
+            return;
+        }
+
+        ApplyPomodoroAttention(viewModel);
+
+        AppSettings settings = SettingsService.Settings;
+        if (settings.PomodoroCompletionNotificationEnabled)
+        {
+            LocalizationService localization = App.Current.LocalizationService;
+            App.Current.NativeNotificationService?.TryShow(
+                localization.T("Pomodoro.Notification.Title"),
+                localization.Format(
+                    "Pomodoro.Notification.Message",
+                    viewModel.PhaseText,
+                    viewModel.RoundSummaryText),
+                options: new NativeAppNotificationOptions(MuteAudio: true));
+        }
+
+        if (settings.PomodoroCompletionSoundEnabled)
+        {
+            _ = PomodoroCompletionSoundService.TryPlay();
         }
     }
 
@@ -1162,6 +1341,13 @@ IsHideAnimationRunning = true;
             if (!IsClosing && IsWidgetCollapsed)
             {
                 RefreshCompactPresentation();
+                if (_pomodoroAlertSource is not null)
+                {
+                    // 折叠呈现会在下一帧更新紧凑表面。随后重新挂载
+                    // 持续提醒，避免完成事件与折叠层提交处于同一帧时
+                    // Composition 动画未真正启动。
+                    ApplyPomodoroAttention(_pomodoroAlertSource);
+                }
             }
         }))
         {
@@ -1270,6 +1456,14 @@ IsHideAnimationRunning = true;
                 _compactPresentationSource.PropertyChanged -= CompactPresentationSource_PropertyChanged;
                 _compactPresentationSource = null;
             }
+            if (_pomodoroAlertSource is not null)
+            {
+                _pomodoroAlertSource.PropertyChanged -=
+                    PomodoroAlertSource_PropertyChanged;
+                _pomodoroAlertSource.CompletionOccurred -=
+                    PomodoroAlertSource_CompletionOccurred;
+                _pomodoroAlertSource = null;
+            }
             if (_subscribedSearchHistoryService is { } historyService)
             {
                 historyService.RecentQueriesChanged -= OnRecentQueriesChanged;
@@ -1372,6 +1566,7 @@ IsHideAnimationRunning = true;
                         WidgetKind.Music => "Music.Title",
                         WidgetKind.Glance => "Glance.Title",
                         WidgetKind.Search => "Search.Title",
+                        WidgetKind.Pomodoro => "Pomodoro.Title",
                         WidgetKind.SystemMonitor => "SystemMonitor.Title",
                         _ => ""
                     };

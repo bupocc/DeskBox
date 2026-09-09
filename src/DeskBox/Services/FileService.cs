@@ -32,6 +32,13 @@ internal enum FolderEntryRefreshStatus
     AccessDenied
 }
 
+internal enum SteamGameInstallState
+{
+    Installed,
+    NotInstalled,
+    Unknown
+}
+
 internal sealed record FolderPathSnapshot(
     FolderSnapshotStatus Status,
     IReadOnlySet<string> Paths);
@@ -646,9 +653,14 @@ public sealed partial class FileService
     public void ClearIconCache(
         string path,
         bool hideShortcutArrowOverlay = false,
-        bool showImageFilesAsIcons = false)
+        bool showImageFilesAsIcons = false,
+        bool resetTransientFailures = true)
     {
-        IconHelper.ClearIconCache(path, hideShortcutArrowOverlay, showImageFilesAsIcons);
+        IconHelper.ClearIconCache(
+            path,
+            hideShortcutArrowOverlay,
+            showImageFilesAsIcons,
+            resetTransientFailures);
         if (!ShortcutHelper.IsShortcutPath(path) &&
             TryResolveExistingPathForTraversal(path, out string resolvedPath) &&
             !string.Equals(path, resolvedPath, StringComparison.OrdinalIgnoreCase))
@@ -656,7 +668,8 @@ public sealed partial class FileService
             IconHelper.ClearIconCache(
                 resolvedPath,
                 hideShortcutArrowOverlay,
-                showImageFilesAsIcons);
+                showImageFilesAsIcons,
+                resetTransientFailures);
         }
     }
 
@@ -1105,7 +1118,15 @@ public sealed partial class FileService
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            EnsureSafeDirectoryTransfers(normalizedSourcePaths.Select(path =>
+            List<string> transferableSourcePaths = normalizedSourcePaths
+                .Where(path =>
+                    (File.Exists(path) || Directory.Exists(path)) &&
+                    !IsEntryDirectlyInDirectoryResolved(
+                        path,
+                        normalizedDestinationFolder))
+                .ToList();
+
+            EnsureSafeDirectoryTransfers(transferableSourcePaths.Select(path =>
                 new TransferOperation(path, normalizedDestinationFolder)));
 
             if (!Directory.Exists(normalizedDestinationFolder))
@@ -1114,10 +1135,7 @@ public sealed partial class FileService
             }
 
             var reservedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            return normalizedSourcePaths
-                .Where(path =>
-                    (File.Exists(path) || Directory.Exists(path)) &&
-                    !string.Equals(Path.GetDirectoryName(path), normalizedDestinationFolder, StringComparison.OrdinalIgnoreCase))
+            return transferableSourcePaths
                 .Select(path => new FileTransferPlan(
                     path,
                     GetAvailablePath(Path.Combine(normalizedDestinationFolder, Path.GetFileName(path)), reservedPaths)))
@@ -1142,7 +1160,9 @@ public sealed partial class FileService
         bool useShellProgress = false,
         IntPtr ownerWindowHandle = default,
         IProgress<FileTransferProgress>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool allowShellElevation = false,
+        Action<FileTransferResult>? itemCompleted = null)
     {
         var operations = await Task.Run(() =>
         {
@@ -1173,6 +1193,15 @@ public sealed partial class FileService
                     operation.DestinationPath,
                     operation.SourceIsDirectory)),
                 move);
+
+        if (allowShellElevation)
+        {
+            if (ownerWindowHandle == IntPtr.Zero)
+                throw new InvalidOperationException("Interactive desktop transfers require an owner window.");
+            return await ExecuteModernShellTransferPlanAsync(
+                operations, move, ownerWindowHandle, progress, cancellationToken,
+                keepBoth: true, itemCompleted: itemCompleted);
+        }
 
         if (useShellProgress)
         {
@@ -1951,6 +1980,99 @@ public sealed partial class FileService
                IsPathUnderDirectory(second, first);
     }
 
+    /// <summary>
+    /// Returns whether an entry is already a direct child of a destination
+    /// directory after resolving junctions, symbolic links and filesystem
+    /// aliases. If the physical identity cannot be resolved, an exact lexical
+    /// parent match is retained as a conservative fallback.
+    /// </summary>
+    public static bool IsEntryDirectlyInDirectoryResolved(
+        string entryPath,
+        string directoryPath)
+    {
+        try
+        {
+            string normalizedEntry = Path.GetFullPath(entryPath);
+            string? parentPath = Path.GetDirectoryName(normalizedEntry);
+            if (string.IsNullOrWhiteSpace(parentPath))
+            {
+                return false;
+            }
+
+            if (TryResolvePathIdentity(parentPath, out string resolvedParent) &&
+                TryResolvePathIdentity(directoryPath, out string resolvedDirectory))
+            {
+                return string.Equals(
+                    resolvedParent,
+                    resolvedDirectory,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+
+            return string.Equals(
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(parentPath)),
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(directoryPath)),
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Returns whether any source directory contains the destination directory
+    /// after resolving junctions, symbolic links and filesystem aliases.
+    /// Transfers matching this condition must be rejected before a Shell
+    /// operation is started.
+    /// </summary>
+    internal static bool IsUnsafeDirectoryTransfer(
+        IEnumerable<string> sourcePaths,
+        string? destinationPath)
+    {
+        if (string.IsNullOrWhiteSpace(destinationPath))
+        {
+            return false;
+        }
+
+        string normalizedDestination;
+        try
+        {
+            normalizedDestination = Path.GetFullPath(destinationPath);
+        }
+        catch
+        {
+            return false;
+        }
+
+        foreach (string sourcePath in sourcePaths)
+        {
+            if (string.IsNullOrWhiteSpace(sourcePath))
+            {
+                continue;
+            }
+
+            string normalizedSource;
+            try
+            {
+                normalizedSource = Path.GetFullPath(sourcePath);
+            }
+            catch
+            {
+                continue;
+            }
+
+            if (Directory.Exists(normalizedSource) &&
+                IsPathUnderDirectoryResolved(
+                    normalizedDestination,
+                    normalizedSource))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public static bool IsPathUnderDirectoryResolved(string candidatePath, string directoryPath)
     {
         if (!TryResolvePathIdentity(candidatePath, out string candidate) ||
@@ -2017,12 +2139,28 @@ public sealed partial class FileService
             // IsPathUnderDirectoryResolved deliberately returns true when an
             // identity cannot be verified, so a directory transfer never
             // falls back to a lexical-only safety decision.
-            if (IsPathUnderDirectoryResolved(operation.DestinationPath, operation.SourcePath))
+            if (IsFileSystemLink(operation.SourcePath) ||
+                IsPathUnderDirectoryResolved(operation.DestinationPath, operation.SourcePath))
             {
                 throw new InvalidOperationException(
                     _localizationService?.T("Widget.Error.UnsafeFolderTransfer") ??
                     UnsafeFolderTransferFallbackMessage);
             }
+        }
+    }
+
+    private static void EnsureSafeRecursiveDirectoryCopy(
+        string sourceDirectory,
+        string destinationDirectory,
+        ISet<string> visitedSourceDirectories)
+    {
+        if (IsFileSystemLink(sourceDirectory) ||
+            IsPathUnderDirectoryResolved(destinationDirectory, sourceDirectory) ||
+            !TryResolvePathIdentity(sourceDirectory, out string sourceIdentity) ||
+            !visitedSourceDirectories.Add(sourceIdentity))
+        {
+            throw new InvalidOperationException(
+                UnsafeFolderTransferFallbackMessage);
         }
     }
 
@@ -2224,31 +2362,6 @@ public sealed partial class FileService
         return result;
     }
 
-    private static bool IsBrokenShortcut(string shortcutPath, string targetPath)
-    {
-        if (!File.Exists(shortcutPath))
-        {
-            return true;
-        }
-
-        if (string.IsNullOrWhiteSpace(targetPath))
-        {
-            // Advertised MSI shortcuts and shell-namespace links may not expose a
-            // filesystem target through IShellLink.GetPath. ShellExecute can still
-            // open them, so an empty target is not enough evidence that the link is
-            // broken.
-            return false;
-        }
-
-        string expandedTarget = Environment.ExpandEnvironmentVariables(targetPath);
-        if (!Path.IsPathFullyQualified(expandedTarget))
-        {
-            return false;
-        }
-
-        return !File.Exists(expandedTarget) && !Directory.Exists(expandedTarget);
-    }
-
     /// <summary>
     /// Show a file in Windows Explorer with it selected.
     /// </summary>
@@ -2280,8 +2393,25 @@ public sealed partial class FileService
         );
     }
 
-    private static async Task CopyDirectoryAsync(string sourceDirectory, string destinationDirectory)
+    private static Task CopyDirectoryAsync(
+        string sourceDirectory,
+        string destinationDirectory)
     {
+        return CopyDirectoryAsync(
+            sourceDirectory,
+            destinationDirectory,
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+    }
+
+    private static async Task CopyDirectoryAsync(
+        string sourceDirectory,
+        string destinationDirectory,
+        ISet<string> visitedSourceDirectories)
+    {
+        EnsureSafeRecursiveDirectoryCopy(
+            sourceDirectory,
+            destinationDirectory,
+            visitedSourceDirectories);
         Directory.CreateDirectory(destinationDirectory);
 
         var completedChildOperations = new List<TransferOperation>();
@@ -2298,7 +2428,10 @@ public sealed partial class FileService
             {
                 string folderName = Path.GetFileName(subDirectory);
                 string destinationSubDirectory = GetAvailableDestinationPath(destinationDirectory, folderName);
-                await CopyDirectoryAsync(subDirectory, destinationSubDirectory);
+                await CopyDirectoryAsync(
+                    subDirectory,
+                    destinationSubDirectory,
+                    visitedSourceDirectories);
                 completedChildOperations.Add(new TransferOperation(subDirectory, destinationSubDirectory));
             }
         }
@@ -2348,9 +2481,15 @@ public sealed partial class FileService
     // ─── Steam dead-shortcut detection ───────────────────────────────────
 
     private static readonly object s_steamLibLock = new();
-    private static string[]? s_steamLibraryPaths;
+    private static SteamLibrarySnapshot? s_steamLibrarySnapshot;
     private static DateTime s_steamLibCacheTime;
     private static readonly TimeSpan SteamLibCacheDuration = TimeSpan.FromMinutes(5);
+
+    private sealed record SteamLibrarySnapshot(
+        string? SteamPath,
+        string[] DeclaredLibraryPaths,
+        long LibraryFileVersion,
+        bool IsAuthoritative);
 
     /// <summary>
     /// Checks whether a .url file is a Steam game shortcut whose game is no longer installed.
@@ -2382,7 +2521,8 @@ public sealed partial class FileService
             }
 
             string appId = content[idStart..idEnd];
-            return !IsSteamGameInstalled(appId);
+            return GetSteamGameInstallState(appId) ==
+                SteamGameInstallState.NotInstalled;
         }
         catch
         {
@@ -2394,96 +2534,244 @@ public sealed partial class FileService
     /// Checks if a Steam game is installed by looking for its appmanifest file
     /// in all known Steam library folders.
     /// </summary>
-    private static bool IsSteamGameInstalled(string appId)
+    private static SteamGameInstallState GetSteamGameInstallState(
+        string appId)
     {
-        var libraryPaths = GetSteamLibraryPaths();
-        if (libraryPaths.Length == 0)
+        SteamLibrarySnapshot snapshot = GetSteamLibrarySnapshot();
+        var evidence = new List<(bool IsAvailable, bool HasManifest)>();
+
+        foreach (string libraryPath in snapshot.DeclaredLibraryPaths)
         {
-            return true; // Can't determine Steam location, assume installed
+            evidence.Add(InspectSteamLibraryManifest(libraryPath, appId));
         }
 
-        foreach (var libPath in libraryPaths)
+        return EvaluateSteamGameInstallState(
+            snapshot.IsAuthoritative,
+            evidence);
+    }
+
+    internal static SteamGameInstallState EvaluateSteamGameInstallState(
+        bool snapshotIsAuthoritative,
+        IReadOnlyList<(bool IsAvailable, bool HasManifest)> libraries)
+    {
+        if (libraries.Any(library => library.HasManifest))
         {
-            string manifestPath = Path.Combine(libPath, "steamapps", $"appmanifest_{appId}.acf");
-            if (File.Exists(manifestPath))
-            {
-                return true;
-            }
+            return SteamGameInstallState.Installed;
         }
 
-        return false;
+        if (!snapshotIsAuthoritative ||
+            libraries.Count == 0 ||
+            libraries.Any(library => !library.IsAvailable))
+        {
+            return SteamGameInstallState.Unknown;
+        }
+
+        return SteamGameInstallState.NotInstalled;
+    }
+
+    private static (bool IsAvailable, bool HasManifest)
+        InspectSteamLibraryManifest(
+            string libraryPath,
+            string appId)
+    {
+        if (!Directory.Exists(libraryPath))
+        {
+            return (false, false);
+        }
+
+        string manifestPath = Path.Combine(
+            libraryPath,
+            "steamapps",
+            $"appmanifest_{appId}.acf");
+        try
+        {
+            System.IO.FileAttributes attributes = File.GetAttributes(manifestPath);
+            return (true, !attributes.HasFlag(System.IO.FileAttributes.Directory));
+        }
+        catch (FileNotFoundException)
+        {
+            return (true, false);
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return (true, false);
+        }
+        catch (Exception ex) when (
+            ex is UnauthorizedAccessException or IOException or NotSupportedException)
+        {
+            // File.Exists collapses access errors into false, which could hide
+            // a valid shortcut. Treat an unreadable library as unknown instead.
+            return (false, false);
+        }
     }
 
     /// <summary>
     /// Gets all Steam library folder paths (cached for 5 minutes).
     /// Reads from the registry and libraryfolders.vdf.
     /// </summary>
-    private static string[] GetSteamLibraryPaths()
+    private static SteamLibrarySnapshot GetSteamLibrarySnapshot()
     {
         lock (s_steamLibLock)
         {
-            if (s_steamLibraryPaths is not null &&
+            string? steamPath = TryGetSteamInstallPath();
+            string? libraryFilePath = string.IsNullOrWhiteSpace(steamPath)
+                ? null
+                : Path.Combine(
+                    steamPath,
+                    "steamapps",
+                    "libraryfolders.vdf");
+            long libraryFileVersion = GetOptionalFileVersion(libraryFilePath);
+            if (s_steamLibrarySnapshot is not null &&
+                string.Equals(
+                    s_steamLibrarySnapshot.SteamPath,
+                    steamPath,
+                    StringComparison.OrdinalIgnoreCase) &&
+                s_steamLibrarySnapshot.LibraryFileVersion == libraryFileVersion &&
                 DateTime.UtcNow - s_steamLibCacheTime < SteamLibCacheDuration)
             {
-                return s_steamLibraryPaths;
+                return s_steamLibrarySnapshot;
             }
 
             var paths = new List<string>();
+            bool isAuthoritative = true;
 
             try
             {
-                // Get Steam install path from registry
-                string? steamPath = null;
-                using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Valve\Steam");
-                if (key?.GetValue("SteamPath") is string sp)
-                {
-                    steamPath = sp.Replace('/', '\\');
-                }
-
                 if (string.IsNullOrEmpty(steamPath) || !Directory.Exists(steamPath))
                 {
-                    s_steamLibraryPaths = [];
-                    s_steamLibCacheTime = DateTime.UtcNow;
-                    return s_steamLibraryPaths;
+                    isAuthoritative = false;
                 }
-
-                // The default library is always the Steam install directory
-                paths.Add(steamPath);
-
-                // Parse libraryfolders.vdf for additional library folders
-                string vdfPath = Path.Combine(steamPath, "steamapps", "libraryfolders.vdf");
-                if (File.Exists(vdfPath))
+                else
                 {
-                    foreach (string line in File.ReadLines(vdfPath))
+                    // Keep every declared path, including currently unavailable
+                    // removable/network libraries. Their absence means the
+                    // installation state is unknown, not that the game was
+                    // uninstalled.
+                    paths.Add(steamPath);
+
+                    if (libraryFilePath is not null &&
+                        File.Exists(libraryFilePath))
                     {
-                        string trimmed = line.Trim();
-                        // Look for "path" entries: "path" "D:\\SteamLibrary"
-                        if (trimmed.StartsWith("\"path\"", StringComparison.OrdinalIgnoreCase))
+                        int parsedPathCount = 0;
+                        foreach (string line in File.ReadLines(libraryFilePath))
                         {
-                            int firstQuote = trimmed.IndexOf('"', 7);
-                            int secondQuote = trimmed.IndexOf('"', firstQuote + 1);
-                            if (firstQuote >= 0 && secondQuote > firstQuote)
+                            string trimmed = line.Trim();
+                            // Look for "path" entries: "path" "D:\\SteamLibrary"
+                            if (trimmed.StartsWith(
+                                    "\"path\"",
+                                    StringComparison.OrdinalIgnoreCase))
                             {
-                                string libPath = trimmed[(firstQuote + 1)..secondQuote]
-                                    .Replace("\\\\", "\\");
-                                if (Directory.Exists(libPath) &&
-                                    !paths.Contains(libPath, StringComparer.OrdinalIgnoreCase))
+                                int firstQuote = trimmed.IndexOf('"', 7);
+                                int secondQuote = firstQuote >= 0
+                                    ? trimmed.IndexOf('"', firstQuote + 1)
+                                    : -1;
+                                if (firstQuote >= 0 && secondQuote > firstQuote)
                                 {
-                                    paths.Add(libPath);
+                                    string libraryPath =
+                                        trimmed[(firstQuote + 1)..secondQuote]
+                                            .Replace("\\\\", "\\");
+                                    parsedPathCount++;
+                                    if (!paths.Contains(
+                                            libraryPath,
+                                            StringComparer.OrdinalIgnoreCase))
+                                    {
+                                        paths.Add(libraryPath);
+                                    }
                                 }
                             }
                         }
+
+                        // A current Steam library file normally contains at
+                        // least its default path. Treat an unreadable/unknown
+                        // format conservatively instead of hiding shortcuts.
+                        if (parsedPathCount == 0)
+                        {
+                            isAuthoritative = false;
+                        }
+                    }
+                    else
+                    {
+                        // Without the library registry Steam may still have
+                        // games on secondary drives, so root-only evidence is
+                        // insufficient to declare a shortcut dead.
+                        isAuthoritative = false;
                     }
                 }
             }
             catch (Exception ex)
             {
+                isAuthoritative = false;
                 App.Log($"[FileService] Failed to enumerate Steam libraries: {ex.Message}");
             }
 
-            s_steamLibraryPaths = paths.ToArray();
+            s_steamLibrarySnapshot = new SteamLibrarySnapshot(
+                steamPath,
+                paths.ToArray(),
+                libraryFileVersion,
+                isAuthoritative);
             s_steamLibCacheTime = DateTime.UtcNow;
-            return s_steamLibraryPaths;
+            return s_steamLibrarySnapshot;
+        }
+    }
+
+    private static string? TryGetSteamInstallPath()
+    {
+        string? userPath = null;
+        try
+        {
+            using var currentUserKey =
+                Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                    @"Software\Valve\Steam");
+            if (currentUserKey?.GetValue("SteamPath") is string value &&
+                !string.IsNullOrWhiteSpace(value))
+            {
+                userPath = value.Replace('/', '\\');
+                if (Directory.Exists(userPath))
+                {
+                    return userPath;
+                }
+            }
+        }
+        catch
+        {
+            // Keep checking the machine-wide registration.
+        }
+
+        string? machinePath = null;
+        try
+        {
+            using var localMachineKey =
+                Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
+                    @"SOFTWARE\WOW6432Node\Valve\Steam");
+            if (localMachineKey?.GetValue("InstallPath") is string value &&
+                !string.IsNullOrWhiteSpace(value))
+            {
+                machinePath = value.Replace('/', '\\');
+                if (Directory.Exists(machinePath))
+                {
+                    return machinePath;
+                }
+            }
+        }
+        catch
+        {
+            // Registry access is advisory. Unknown state keeps the shortcut.
+        }
+
+        return userPath ?? machinePath;
+    }
+
+    private static long GetOptionalFileVersion(string? path)
+    {
+        try
+        {
+            return !string.IsNullOrWhiteSpace(path) && File.Exists(path)
+                ? File.GetLastWriteTimeUtc(path).Ticks
+                : 0;
+        }
+        catch
+        {
+            return 0;
         }
     }
 }

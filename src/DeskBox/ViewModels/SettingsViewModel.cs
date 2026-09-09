@@ -63,6 +63,10 @@ public partial class SettingsViewModel : ObservableObject, IDisposable
     private readonly LocalizationService _localizationService;
     private readonly WidgetContentFactory _widgetContentFactory;
     private readonly IAppUpdateService _appUpdateService;
+    // Per-kind settings store for the Music pilot (roadmap stage 2); the
+    // legacy AppSettings fields are an inert compatibility source after the
+    // version-10 copy migration.
+    private readonly MusicSettingsStore _musicSettingsStore = MusicSettingsStore.Current;
     private readonly CancellationTokenSource _lifetimeCts = new();
     private bool _isDisposed;
     private CancellationTokenSource? _updateOperationCts;
@@ -195,6 +199,7 @@ private string[]? _cachedWeatherRefreshIntervalDisplayNames;
             : Visibility.Collapsed;
     [ObservableProperty] public partial bool AutoCheckForUpdates { get; set; } = true;
     [ObservableProperty] public partial bool DoubleClickToOpen { get; set; }
+    [ObservableProperty] public partial bool FileItemSystemContextMenuEnabled { get; set; }
     [ObservableProperty] public partial double DefaultWidth { get; set; }
     [ObservableProperty] public partial double DefaultHeight { get; set; }
     [ObservableProperty] public partial bool HideShortcutArrowOverlay { get; set; }
@@ -222,6 +227,7 @@ private string[]? _cachedWeatherRefreshIntervalDisplayNames;
     [ObservableProperty] public partial bool ShowFileExtensions { get; set; }
     [ObservableProperty] public partial bool HideShortcutExtensionWhenShowingFileExtensions { get; set; } = true;
     [ObservableProperty] public partial bool IdleWorkingSetTrimEnabled { get; set; } = true;
+    [ObservableProperty] public partial bool ImmediateHiddenWorkingSetTrimEnabled { get; set; }
     [ObservableProperty] public partial bool QuickCaptureEnabled { get; set; }
     [ObservableProperty] public partial bool QuickCaptureShowTabBar { get; set; } = true;
     [ObservableProperty] public partial bool QuickCaptureShowRecordsTab { get; set; } = true;
@@ -259,6 +265,10 @@ private string[]? _cachedWeatherRefreshIntervalDisplayNames;
     [ObservableProperty] public partial bool QuickCaptureImageClipboardEnabled { get; set; }
     [ObservableProperty] public partial int QuickCaptureRecentLimit { get; set; } = QuickCaptureService.DefaultRecentLimit;
     [ObservableProperty] public partial bool QuickCaptureShowCreatedTime { get; set; } = true;
+    [ObservableProperty] public partial double QuickCaptureListTextSize { get; set; } = SettingsService.DefaultTextSize;
+    [ObservableProperty] public partial double QuickCaptureContentTextSize { get; set; } = SettingsService.DefaultTextSize;
+    [ObservableProperty] public partial double TodoListTextSize { get; set; } = SettingsService.DefaultTextSize;
+    [ObservableProperty] public partial double TodoContentTextSize { get; set; } = SettingsService.DefaultTextSize;
     [ObservableProperty] public partial bool IsCheckingForUpdates { get; set; }
     [ObservableProperty] public partial bool IsDownloadingUpdate { get; set; }
     [ObservableProperty] public partial string UpdateStatusText { get; set; } = string.Empty;
@@ -297,6 +307,7 @@ private string[]? _cachedWeatherRefreshIntervalDisplayNames;
             : StartupService.GetState();
         AutoCheckForUpdates = settings.AutoCheckForUpdates;
         DoubleClickToOpen = settings.DoubleClickToOpen;
+        FileItemSystemContextMenuEnabled = settings.FileItemSystemContextMenuEnabled;
         _selectedFileWidgetFolderOpenBehavior =
             FileWidgetFolderOpenBehaviorNames.NormalizeGlobal(
                 settings.FileWidgetFolderOpenBehavior);
@@ -374,11 +385,16 @@ private string[]? _cachedWeatherRefreshIntervalDisplayNames;
         ShowFileExtensions = settings.ShowFileExtensions;
         HideShortcutExtensionWhenShowingFileExtensions = settings.HideShortcutExtensionWhenShowingFileExtensions;
         IdleWorkingSetTrimEnabled = settings.IdleWorkingSetTrimEnabled;
+        ImmediateHiddenWorkingSetTrimEnabled = settings.ImmediateHiddenWorkingSetTrimEnabled;
         QuickCaptureEnabled = FeatureWidgetSettings.IsEnabled(settings, WidgetKind.QuickCapture);
         QuickCaptureClipboardEnabled = settings.QuickCaptureClipboardEnabled;
         QuickCaptureImageClipboardEnabled = settings.QuickCaptureImageClipboardEnabled;
         QuickCaptureRecentLimit = QuickCaptureService.NormalizeRecentLimit(settings.QuickCaptureRecentLimit);
         QuickCaptureShowCreatedTime = settings.QuickCaptureShowCreatedTime;
+        QuickCaptureListTextSize = SettingsService.NormalizeTextSize(
+            (settings.QuickCaptureListTextSize > 0 ? settings.QuickCaptureListTextSize : settings.TextSize));
+        QuickCaptureContentTextSize = SettingsService.NormalizeTextSize(
+            (settings.QuickCaptureContentTextSize > 0 ? settings.QuickCaptureContentTextSize : settings.TextSize));
         _selectedAttachmentStorageMode = SettingsService.NormalizeAttachmentStorageMode(settings.AttachmentStorageMode);
         _selectedManagedDropAction = settings.ManagedDropAction switch
         {
@@ -404,6 +420,10 @@ private string[]? _cachedWeatherRefreshIntervalDisplayNames;
         TodoShowImportantTab = settings.TodoShowImportantTab;
         TodoShowCompletedTab = settings.TodoShowCompletedTab;
         TodoShowCompletedTasks = settings.TodoShowCompletedTasks;
+        TodoListTextSize = SettingsService.NormalizeTextSize(
+            (settings.TodoListTextSize > 0 ? settings.TodoListTextSize : settings.TextSize));
+        TodoContentTextSize = SettingsService.NormalizeTextSize(
+            (settings.TodoContentTextSize > 0 ? settings.TodoContentTextSize : settings.TextSize));
         TodoShowFooterStats = settings.TodoShowFooterStats;
         TodoShowClearCompletedButton = settings.TodoShowClearCompletedButton;
         _selectedTodoLayoutMode = SettingsService.NormalizeTodoLayoutMode(
@@ -412,9 +432,10 @@ private string[]? _cachedWeatherRefreshIntervalDisplayNames;
         TodoUseWideDetailPane = _selectedTodoLayoutMode != SettingsService.TodoLayoutModeSinglePane;
         TodoAutoSelectFirstInWideLayout = settings.TodoAutoSelectFirstInWideLayout;
         TodoReminderEnabled = settings.TodoReminderEnabled;
-        MusicUseArtworkBackdrop = settings.MusicUseArtworkBackdrop;
-        MusicEnableCoverHoverMotion = settings.MusicEnableCoverHoverMotion;
-        _selectedMusicDisplayMode = SettingsService.NormalizeMusicDisplayMode(settings.MusicDisplayMode);
+        var musicSettings = _musicSettingsStore.Load();
+        MusicUseArtworkBackdrop = musicSettings.UseArtworkBackdrop;
+        MusicEnableCoverHoverMotion = musicSettings.EnableCoverHoverMotion;
+        _selectedMusicDisplayMode = SettingsService.NormalizeMusicDisplayMode(musicSettings.DisplayMode);
 WeatherAutoLocation = settings.WeatherAutoLocation;
 WeatherCityName = settings.WeatherCityName;
 _weatherCitySearchText = settings.WeatherCityName;
@@ -447,6 +468,13 @@ _selectedWeatherRefreshInterval = Math.Clamp(
         _selectedTodoTabStyle = SettingsService.NormalizeWidgetTabStyle(settings.TodoTabStyle);
         _selectedTodoReminderOffsetMinutes = SettingsService.NormalizeTodoReminderOffsetMinutes(settings.TodoDefaultReminderOffsetMinutes);
         _managedStorageRootPath = settings.DefaultManagedStorageRootPath;
+        AutomaticBackupEnabled = settings.AutomaticBackupEnabled;
+        _selectedAutomaticBackupIntervalMinutes = DataBackupSettingsPolicy.NormalizeIntervalMinutes(
+            settings.AutomaticBackupIntervalMinutes);
+        _selectedAutomaticBackupRetentionCount = DataBackupSettingsPolicy.NormalizeRetentionCount(
+            settings.AutomaticBackupRetentionCount);
+        _automaticBackupDirectory =
+            DataBackupSettingsPolicy.NormalizeCustomDirectory(settings.AutomaticBackupDirectory) ?? string.Empty;
 
         ApplyCachedUpdateResult();
         RefreshAccentPreview();

@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    DeskBox official Glance native package (batch D3).
+    D3 phase 2 complete: all production source files are owned by this
+    project (copied from the host, seam references rewritten to package-owned
+    CultureRules/PackageLogger). The host keeps its own copies as the oracle
+    until behavioral parity is confirmed, then deletes them.
+    The host does NOT reference this project.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.22621.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19044.0</SupportedOSPlatformVersion>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>false</WindowsAppSDKSelfContained>
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <Platforms>x64;ARM64</Platforms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsAotCompatible>true</IsAotCompatible>
+    <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
+    <RootNamespace>DeskBox.GlancePackage</RootNamespace>
+    <AssemblyName>DeskBox.GlancePackage</AssemblyName>
+    <WindowsAppSdkBootstrapInitialize>false</WindowsAppSdkBootstrapInitialize>
+    <WindowsAppSDKDeploymentManagerInitialize>false</WindowsAppSDKDeploymentManagerInitialize>
+    <WindowsAppSDKUndockedRegFreeWinRTInitialize>false</WindowsAppSDKUndockedRegFreeWinRTInitialize>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.4.0" />
+  </ItemGroup>
+
+  <!-- Test-only visibility: lets the golden data tests exercise the package's
+       persistence layer directly. The HOST still does not reference this
+       project - that boundary is unchanged. -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>DeskBox.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+  <ItemGroup>
+    <None Update="Rendering\glance.xaml" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="strings\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

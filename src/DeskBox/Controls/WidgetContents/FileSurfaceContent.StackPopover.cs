@@ -14,6 +14,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Windows.ApplicationModel.DataTransfer;
 
 namespace DeskBox.Controls.WidgetContents;
 
@@ -2636,12 +2637,14 @@ public sealed partial class FileSurfaceContent
         object sender,
         DragEventArgs e)
     {
+        e.AcceptedOperation = DataPackageOperation.None;
         if (sender is not ListViewBase view)
         {
             return;
         }
 
         DragPayloadSnapshot payload = GetDragPayload(e.DataView);
+        TraceTargetDropEntered("stack-popover", payload, e);
         if (!TryGetCurrentStackPopoverDrag(
                 payload,
                 out WidgetStackItem sourceStack,

@@ -73,8 +73,13 @@ public sealed partial class ContentWidgetWindow
         bool forward = true)
     {
         ContentWidgetShell.ClearFeedback();
+        bool alwaysOnTopChanged = _config.IsAlwaysOnTop != config.IsAlwaysOnTop;
         _config = config;
         _descriptor = descriptor;
+        if (alwaysOnTopChanged)
+        {
+            ApplyAlwaysOnTopPreference();
+        }
         Diagnostics.SetWidgetContext(config);
         _titleViewModel.SetConfig(config);
         ContentWidgetShell.TitleGlyph = descriptor.DefaultGlyph;
@@ -84,7 +89,9 @@ public sealed partial class ContentWidgetWindow
         AttachFeedbackSource(content);
         AttachHostContextMenuSource(content);
         ApplyLocalizedTitleActionTooltips();
-        ApplyAppearancePreview();
+        // The window chrome changes with the active member. A cached member's
+        // content only needs updating if a real appearance notification occurred.
+        ApplyAppearancePreview(invalidateContent: false);
         RefreshCompactPresentation();
         RefreshWidgetGroupPresentation(
             animateGroupIdentity,

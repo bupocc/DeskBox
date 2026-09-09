@@ -48,6 +48,106 @@ public class IconHelperTests
         Assert.False(IconHelper.IsMediaFile(path));
     }
 
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public void HighResolutionShellItemPolicy_CoversOrdinaryItemsWithoutChangingShortcuts(
+        bool isShortcutPath,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            IconHelper.ShouldPreferHighResolutionShellItemIcon(isShortcutPath));
+    }
+
+    [Theory]
+    [InlineData("game.url", true)]
+    [InlineData("GAME.URL", true)]
+    [InlineData("game.lnk", false)]
+    [InlineData("game.url.txt", false)]
+    [InlineData("", false)]
+    public void InternetShortcutPathDetection_IsLimitedToUrlFiles(
+        string path,
+        bool expected)
+    {
+        Assert.Equal(expected, ShortcutHelper.IsInternetShortcutPath(path));
+    }
+
+    [Theory]
+    [InlineData(@"C:\icons\game.ico", @"C:\icons\game.ico", null)]
+    [InlineData(@"C:\Windows\System32\shell32.dll,-5", @"C:\Windows\System32\shell32.dll", -5)]
+    [InlineData("\"C:\\icons\\game,alternate.dll\", 12", @"C:\icons\game,alternate.dll", 12)]
+    public void SplitIconLocation_PreservesSignedIndexesAndQuotedCommaPaths(
+        string iconLocation,
+        string expectedPath,
+        int? expectedIndex)
+    {
+        var (path, index) = IconHelper.SplitIconLocation(iconLocation);
+
+        Assert.Equal(expectedPath, path);
+        Assert.Equal(expectedIndex, index);
+    }
+
+    [Fact]
+    public void RelativeIconLocation_ResolvesBesideShortcutAndRejectsMalformedPath()
+    {
+        string temporaryDirectory = Path.Combine(
+            Path.GetTempPath(),
+            $"DeskBox-relative-url-icon-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temporaryDirectory);
+        try
+        {
+            string shortcutPath = Path.Combine(temporaryDirectory, "game.url");
+            string iconPath = Path.Combine(temporaryDirectory, "game.ico");
+            File.WriteAllText(shortcutPath, "[InternetShortcut]\nURL=https://example.invalid/\n");
+            File.WriteAllBytes(iconPath, [0]);
+
+            Assert.True(IconHelper.TryResolveRelativeIconLocation(
+                shortcutPath,
+                "game.ico",
+                out string resolvedPath));
+            Assert.Equal(Path.GetFullPath(iconPath), resolvedPath);
+            Assert.False(IconHelper.TryResolveRelativeIconLocation(
+                shortcutPath,
+                "invalid\0icon.ico",
+                out _));
+        }
+        finally
+        {
+            Directory.Delete(temporaryDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void InternetShortcutIconPolicy_IsShellFirstOverlayAwareAndUsedBySearch()
+    {
+        string iconHelper = File.ReadAllText(TestPaths.FromRepository(
+            "src/DeskBox/Helpers/IconHelper.cs"));
+        string fileMetaService = File.ReadAllText(TestPaths.FromRepository(
+            "src/DeskBox/Services/FileMetaService.cs"));
+
+        Assert.Contains(
+            "CreateInternetShortcutIconSource(",
+            iconHelper,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "includeOverlays: !hideShortcutArrowOverlay",
+            iconHelper,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "InternetShortcutIconStrategyVersion",
+            iconHelper,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "ResolveInternetShortcutFallbackSourceAsync(",
+            iconHelper,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "ShortcutHelper.IsShortcutPath(item.DetailPath)",
+            fileMetaService,
+            StringComparison.Ordinal);
+    }
+
     [Fact]
     public void ShortcutIconResolution_IsBoundedAndCacheInvalidationAvoidsShellReads()
     {
@@ -113,7 +213,12 @@ public class IconHelperTests
             source,
             StringComparison.Ordinal);
         Assert.Contains(
-            "iconSource.UsesShellItemIcon",
+            "TryLoadHighResolutionShellItemIconAsync(\n" +
+            "                    originalSourcePath)",
+            source.Replace("\r\n", "\n", StringComparison.Ordinal),
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "loadIconSource.UsesShellItemIcon",
             source,
             StringComparison.Ordinal);
         Assert.Contains(

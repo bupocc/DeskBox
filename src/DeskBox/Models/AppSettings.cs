@@ -62,6 +62,9 @@ public class AppSettings
     /// </summary>
     public bool IdleWorkingSetTrimEnabled { get; set; } = true;
 
+    /// <summary>Experimental working-set trim once all widget hide animations have completed.</summary>
+    public bool ImmediateHiddenWorkingSetTrimEnabled { get; set; }
+
     /// <summary>Finite delay before closing a hidden transient window such as Search.</summary>
     public int TransientWindowReleaseDelaySeconds { get; set; } = 10 * 60;
 
@@ -113,6 +116,12 @@ public class AppSettings
 
     /// <summary>Maximum number of text lines shown for each Quick Capture item in the list.</summary>
     public int QuickCaptureItemPreviewLineCount { get; set; } = 3;
+
+    /// <summary>Text size for Quick Capture list cards. Zero keeps the global appearance size for legacy settings.</summary>
+    public double QuickCaptureListTextSize { get; set; }
+
+    /// <summary>Text size for Quick Capture detail content. Zero keeps the global appearance size for legacy settings.</summary>
+    public double QuickCaptureContentTextSize { get; set; }
 
     /// <summary>Enter-key behavior used by Quick Capture multiline editors.</summary>
     public string QuickCaptureEditorEnterBehavior { get; set; } = "CtrlEnterSaves";
@@ -169,6 +178,12 @@ public class AppSettings
 
     /// <summary>Maximum number of text lines shown for each Todo item in the list.</summary>
     public int TodoItemPreviewLineCount { get; set; } = 2;
+
+    /// <summary>Text size for Todo list cards. Zero keeps the global appearance size for legacy settings.</summary>
+    public double TodoListTextSize { get; set; }
+
+    /// <summary>Text size for Todo detail content. Zero keeps the global appearance size for legacy settings.</summary>
+    public double TodoContentTextSize { get; set; }
 
     /// <summary>Enter-key behavior used by Todo multiline editors.</summary>
     public string TodoEditorEnterBehavior { get; set; } = "CtrlEnterSaves";
@@ -452,6 +467,12 @@ public class AppSettings
     public string FileWidgetFolderOpenBehavior { get; set; } = "Explorer";
 
     /// <summary>
+    /// Whether right-clicking a single file item in a file widget shows the
+    /// native Windows context menu instead of the built-in DeskBox menu.
+    /// </summary>
+    public bool FileItemSystemContextMenuEnabled { get; set; }
+
+    /// <summary>
     /// Whether shortcut icons should hide the arrow overlay inside DeskBox.
     /// </summary>
     public bool HideShortcutArrowOverlay { get; set; } = true;
@@ -562,6 +583,29 @@ public class AppSettings
     /// exact path lets DeskBox avoid overwriting or deleting unrelated links.
     /// </summary>
     public string ManagedStorageDesktopShortcutPath { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Whether DeskBox creates automatic data snapshots on a schedule.
+    /// </summary>
+    public bool AutomaticBackupEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Minutes between automatic snapshots; always one of the preset values in
+    /// <see cref="Services.DataBackupSettingsPolicy.SupportedIntervalMinutes"/>.
+    /// </summary>
+    public int AutomaticBackupIntervalMinutes { get; set; } = 24 * 60;
+
+    /// <summary>
+    /// How many automatic snapshots to keep; always one of the preset values in
+    /// <see cref="Services.DataBackupSettingsPolicy.SupportedRetentionCounts"/>.
+    /// </summary>
+    public int AutomaticBackupRetentionCount { get; set; } = 7;
+
+    /// <summary>
+    /// Custom directory for automatic snapshots. Empty means the default
+    /// recovery directory outside the app-data root.
+    /// </summary>
+    public string AutomaticBackupDirectory { get; set; } = string.Empty;
 
     /// <summary>
     /// Recent organization history used for undo and quick review.
@@ -787,6 +831,46 @@ public class AppSettings
     /// Refresh interval in minutes. Valid values: 15, 30, 60, 180.
     /// </summary>
     public int WeatherRefreshIntervalMinutes { get; set; } = 60;
+
+    // ─── Pomodoro Widget Settings ──────────────────────────────────
+
+    /// <summary>
+    /// 每个番茄钟周期包含的专注轮数。有效范围由
+    /// <see cref="DeskBox.Services.PomodoroSettingsPolicy"/> 统一约束。
+    /// </summary>
+    public int PomodoroRoundCount { get; set; } = 4;
+
+    /// <summary>
+    /// 每轮专注时长（分钟）。有效范围由
+    /// <see cref="DeskBox.Services.PomodoroSettingsPolicy"/> 统一约束。
+    /// </summary>
+    public int PomodoroFocusMinutes { get; set; } = 25;
+
+    /// <summary>
+    /// 非周期末尾的短休息时长（分钟）。有效范围由
+    /// <see cref="DeskBox.Services.PomodoroSettingsPolicy"/> 统一约束。
+    /// </summary>
+    public int PomodoroShortBreakMinutes { get; set; } = 5;
+
+    /// <summary>
+    /// 完成整个周期后的长休息时长（分钟）。有效范围由
+    /// <see cref="DeskBox.Services.PomodoroSettingsPolicy"/> 统一约束。
+    /// </summary>
+    public int PomodoroLongBreakMinutes { get; set; } = 15;
+
+    /// <summary>自然完成番茄钟阶段时是否播放提示音。</summary>
+    public bool PomodoroCompletionSoundEnabled { get; set; } = true;
+
+    /// <summary>自然完成番茄钟阶段时是否显示系统通知。</summary>
+    public bool PomodoroCompletionNotificationEnabled { get; set; } = true;
+
+    /// <summary>
+    /// 旧版单一休息时长的迁移入口。加载后会迁入
+    /// <see cref="PomodoroShortBreakMinutes"/> 并清空，避免形成两套配置真值。
+    /// </summary>
+    [JsonPropertyName("pomodoroBreakMinutes")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? LegacyPomodoroBreakMinutes { get; set; }
 
     // ─── Search Settings ───────────────────────────────────────────────
 
