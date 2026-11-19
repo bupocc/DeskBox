@@ -1,4 +1,4 @@
-﻿// Copyright (c) DeskBox. All rights reserved.
+// Copyright (c) DeskBox. All rights reserved.
 
 using DeskBox.Models;
 using DeskBox.Helpers;
@@ -973,6 +973,15 @@ public sealed partial class WidgetManager
             $"[ZOrder] TemporaryRaise cleared reason={reason} count={count}");
     }
 
+    /// <summary>
+    /// A user-pinned widget ("always on top") sits in the topmost band, not the
+    /// desktop band. Idle normalization must neither reorder it nor read the
+    /// topmost window as a torn band, so every band-wide window list filters it
+    /// out here instead of teaching each pass its own rule.
+    /// </summary>
+    private static bool IsPinnedByUser(IDesktopWidgetWindow window) =>
+        window.Config?.IsAlwaysOnTop == true;
+
     private bool NormalizeIdleWidgetZOrder(string reason, bool cohesionExit = false)
     {
         // Keep the legacy behavior when the system setting cannot be read:
@@ -1002,7 +1011,9 @@ public sealed partial class WidgetManager
         }
 
         List<IDesktopWidgetWindow> candidates = GetLoadedDesktopWindows()
-            .Where(window => window.Visible && !window.IsRaisedAboveDesktopLayer)
+            .Where(window => window.Visible &&
+                !window.IsRaisedAboveDesktopLayer &&
+                !IsPinnedByUser(window))
             .ToList();
 
         // Ordering on transient animation bounds produces a different order
@@ -1063,7 +1074,8 @@ public sealed partial class WidgetManager
             List<IDesktopWidgetWindow> bandWindows = GetLoadedDesktopWindows()
                 .Where(window => window.Visible &&
                     window.WindowHandle != IntPtr.Zero &&
-                    Win32Helper.IsWindow(window.WindowHandle))
+                    Win32Helper.IsWindow(window.WindowHandle) &&
+                    !IsPinnedByUser(window))
                 .ToList();
             List<IntPtr> bandHandles = GetWindowsInIdleHighestFirstOrder(bandWindows)
                 .Select(window => window.WindowHandle)

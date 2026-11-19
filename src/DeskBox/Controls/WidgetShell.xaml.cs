@@ -2609,6 +2609,10 @@ public sealed partial class WidgetShell : UserControl
                 : new SolidColorBrush(
                     App.Current.ThemeService?.GetEffectiveAccentColor() ??
                     AccentColorHelper.DefaultAccentColor);
+
+            // The hover action row is offset by the badge width, and ActualWidth
+            // is only valid once this text has been measured.
+            DispatcherQueue.TryEnqueue(UpdateCompactActionRegionWidth);
         }
 
         // Visual effects
@@ -2830,11 +2834,35 @@ public sealed partial class WidgetShell : UserControl
             : visibleButtons.Length > 0
                 ? CompactActionTrailingPadding
                 : 0;
+
+        // The badge lives at the right edge of the text column, and that column
+        // itself ends left of the reorder grip, so measuring the badge alone
+        // under-reserves and the buttons still lap over "1/4" / "完成". Reserve
+        // everything from the badge's left edge to the capsule edge instead.
+        double badgeReserve = 0;
+        if (CompactBadge.Visibility == Visibility.Visible && CompactBadge.ActualWidth > 0)
+        {
+            try
+            {
+                GeneralTransform badgeTransform = CompactBadge.TransformToVisual(this);
+                double badgeLeft = badgeTransform.TransformPoint(new Windows.Foundation.Point(0, 0)).X;
+                badgeReserve = Math.Max(0, ActualWidth - badgeLeft) + CompactActionTrailingPadding;
+            }
+            catch (ArgumentException)
+            {
+                badgeReserve = 0;
+            }
+            catch (InvalidOperationException)
+            {
+                badgeReserve = 0;
+            }
+        }
+
         double actionRegionWidth = buttonWidth + buttonSpacing + trailingWidth;
 
-        CompactActionHost.Margin = new Thickness(0, 0, trailingWidth, 0);
+        CompactActionHost.Margin = new Thickness(0, 0, trailingWidth + badgeReserve, 0);
         CompactActionRegionHighlight.Width = actionRegionWidth;
-        CompactActionRegionTrigger.Width = actionRegionWidth;
+        CompactActionRegionTrigger.Width = actionRegionWidth + badgeReserve;
     }
 
     private void UpdateCompactTextViewportWidths()
@@ -2975,6 +3003,13 @@ public sealed partial class WidgetShell : UserControl
             : Visibility.Collapsed;
     }
 
+    private void CompactBadge_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        // Badge text flips between "1/4" and "完成" (and grows with round
+        // counts), so the reserved hover-action gap must follow its width.
+        UpdateCompactActionRegionWidth();
+    }
+
     private void ApplyCompactLiveState()
     {
         // Determinate progress (duration known): show the real fraction bar.
@@ -2990,6 +3025,24 @@ public sealed partial class WidgetShell : UserControl
             bool isAttention = _compactPresentation?.IsAttention == true;
             bool isFullBleed = _compactPresentation?.UseFullBleedBackground == true;
 
+            // Owner-painted progress (pomodoro phase accent). It replaces both
+            // the todo orange/complete palette and the full-bleed white bar so
+            // the timer ring color always matches the capsule accent.
+            if (_compactPresentation?.ProgressColor is { } progressColor)
+            {
+                CompactLiveIndicatorHost.Height = isFullBleed ? 3 : 2.5;
+                CompactLiveTrack.Background = new SolidColorBrush(
+                    Windows.UI.Color.FromArgb(0x38, progressColor.R, progressColor.G, progressColor.B));
+                CompactLiveTrack.Opacity = 1;
+                CompactLiveProgress.Background = new SolidColorBrush(
+                    Windows.UI.Color.FromArgb(0xFF, progressColor.R, progressColor.G, progressColor.B));
+                CompactLiveProgressTransform.ScaleX = value;
+                // A running timer keeps the bar clearly visible; a paused or
+                // finished one dims it so the badge stays the focal point.
+                CompactLiveProgress.Opacity = isPlaying ? 0.95 : 0.55;
+                return;
+            }
+
             // Full-bleed mode: white progress bar, thicker, more visible
             if (isFullBleed)
             {
@@ -3001,9 +3054,13 @@ public sealed partial class WidgetShell : UserControl
             else
             {
                 CompactLiveIndicatorHost.Height = 2;
-                CompactLiveTrack.ClearValue(Border.BackgroundProperty);
+                var trackAccent = App.Current.ThemeService?.GetEffectiveAccentColor()
+                    ?? AccentColorHelper.DefaultAccentColor;
+                CompactLiveTrack.Background = new SolidColorBrush(trackAccent);
                 CompactLiveTrack.Opacity = isAttention ? 0.3 : 0.16;
-                CompactLiveProgress.ClearValue(Border.BackgroundProperty);
+                var restingAccent = App.Current.ThemeService?.GetEffectiveAccentColor()
+                    ?? AccentColorHelper.DefaultAccentColor;
+                CompactLiveProgress.Background = new SolidColorBrush(restingAccent);
             }
 
             CompactLiveProgressTransform.ScaleX = value;
@@ -3029,7 +3086,13 @@ public sealed partial class WidgetShell : UserControl
             }
             else if (!isFullBleed)
             {
-                CompactLiveProgress.ClearValue(Border.BackgroundProperty);
+                // ClearValue would drop the XAML ThemeResource and leave the
+                // border with no brush at all, so a *playing* determinate bar
+                // disappeared while paused ones stayed visible. Paint the accent
+                // explicitly instead.
+                var playingAccent = App.Current.ThemeService?.GetEffectiveAccentColor()
+                    ?? AccentColorHelper.DefaultAccentColor;
+                CompactLiveProgress.Background = new SolidColorBrush(playingAccent);
             }
 
             if (isPlaying)

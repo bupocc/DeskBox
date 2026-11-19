@@ -193,7 +193,12 @@ public sealed partial class ContentWidgetWindow
         IsHideAnimationRunning = false;
         _isHidePrepared = false;
         TrayAnimation.Stop();
-        WidgetLayerService.ClearTopMost(HWnd);
+        if (!Config.IsAlwaysOnTop)
+        {
+            // A pinned widget keeps WS_EX_TOPMOST while hidden so the next tray
+            // reveal does not flash at the desktop layer first.
+            WidgetLayerService.ClearTopMost(HWnd);
+        }
         Win32Helper.ShowWindow(HWnd, Win32Helper.SW_HIDE);
         AppWindow.Hide();
         SetTrayHideInputSuppressed(false);

@@ -1508,6 +1508,7 @@
   "Widget.ChangeMappedPath": "ম্যাপ করা পথ পরিবর্তন করুন",
   "Widget.IconView": "আইকন ভিউ",
   "Widget.ListView": "তালিকা দেখুন",
+  "Widget.AlwaysOnTop": "সর্বদা উপরে",
   "Widget.LockPosition": "লক অবস্থান",
   "Widget.LockSize": "লক সাইজ",
   "Widget.Lock.Hint": "লক করলে শুধু ড্র্যাগ ও সাইজ বদলানো বন্ধ থাকে; অবস্থান পুনরুদ্ধার, ডিসপ্লে বদল বা গ্রুপ পুনর্বিন্যাসের সময় উইজেট তবুও সরতে পারে",

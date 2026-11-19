@@ -440,6 +440,10 @@ public sealed partial class ContentWidgetWindow
             _config.IsSizeLocked,
             SetPositionLocked,
             SetSizeLocked));
+        flyout.Items.Add(WidgetAlwaysOnTopMenuBuilder.Create(
+            App.Current.LocalizationService,
+            _config.IsAlwaysOnTop,
+            SetAlwaysOnTop));
 
         // Hidden entirely on single-monitor systems, matching how Windows
         // hides commands that cannot apply; null must not reach Items.Add.
@@ -993,6 +997,18 @@ public sealed partial class ContentWidgetWindow
         SettingsService.UpdateWidget(_config);
         SynchronizeWidgetGroupLayout();
         ApplyLockActionIconState();
+    }
+
+    private void SetAlwaysOnTop(bool value)
+    {
+        if (_config.IsAlwaysOnTop == value)
+        {
+            return;
+        }
+
+        _config.IsAlwaysOnTop = value;
+        SettingsService.UpdateWidget(_config);
+        ApplyAlwaysOnTopPreference();
     }
 
     // ── Title rename ───────────────────────────────────────────

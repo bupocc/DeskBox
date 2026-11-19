@@ -361,6 +361,9 @@ public sealed partial class ContentWidgetWindow : WidgetWindowBase, IDesktopWidg
                 accent.B),
             EdgeGlowColor: accent,
             IconColor: accent,
+            // The phase accent also paints the capsule's bottom progress bar so
+            // a running timer never borrows the todo orange/complete palette.
+            ProgressColor: accent,
             // Ticking fields are applied in place by WidgetShell so the capsule
             // does not re-layout or pulse once per second.
             IsLiveTextUpdate: true);
@@ -1090,6 +1093,15 @@ IsHideAnimationRunning = true;
             return;
         }
 
+        if (Config.IsAlwaysOnTop)
+        {
+            // Group teardown owns the desktop band, not the topmost band a
+            // user-pinned widget lives in.
+            EndExpandedWidgetLayerLease();
+            ApplyAlwaysOnTopLayer(showWindow: false);
+            return;
+        }
+
         // Manager teardown always wins over an expanded capsule lease: the
         // whole group is returning to its resting layer, so ending the lease
         // here keeps later interaction elevates working after the teardown.
@@ -1128,7 +1140,10 @@ IsHideAnimationRunning = true;
         _autoRestoreTimer?.Stop();
         CancelPendingDesktopLayerRestore();
         UpdatePersistedVisibility(isVisible: false, persistVisibility: true);
-        WidgetLayerService.ClearTopMost(HWnd);
+        if (!Config.IsAlwaysOnTop)
+        {
+            WidgetLayerService.ClearTopMost(HWnd);
+        }
         Win32Helper.ShowWindow(HWnd, Win32Helper.SW_HIDE);
         AppWindow.Hide();
         WidgetShellControl.SuspendVisualActivity();

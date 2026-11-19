@@ -1,4 +1,4 @@
-﻿﻿using DeskBox.Models;
+﻿using DeskBox.Models;
 using DeskBox.Helpers;
 using DeskBox.Contracts;
 using DeskBox.Controls.WidgetContents;
@@ -2478,7 +2478,8 @@ public sealed partial class WidgetManager
         StopTrayLayerRestoreMonitor();
         IReadOnlyList<IDesktopWidgetWindow> windows =
             GetWindowsInIdleHighestFirstOrder(
-                GetLoadedDesktopWindows().Where(window => window.Visible));
+                GetLoadedDesktopWindows().Where(window =>
+                    window.Visible && window.Config?.IsAlwaysOnTop != true));
         foreach (IDesktopWidgetWindow window in windows)
         {
             try

@@ -1508,6 +1508,7 @@
   "Widget.ChangeMappedPath": "Cambiar ruta asignada",
   "Widget.IconView": "Vista de iconos",
   "Widget.ListView": "Vista de lista",
+  "Widget.AlwaysOnTop": "Siempre visible",
   "Widget.LockPosition": "Bloquear posición",
   "Widget.LockSize": "Bloquear tamaño",
   "Widget.Lock.Hint": "Bloquear solo impide arrastrar y cambiar el tamaño; los widgets siguen moviéndose al restaurar posiciones, cambiar de pantalla o reordenar grupos",

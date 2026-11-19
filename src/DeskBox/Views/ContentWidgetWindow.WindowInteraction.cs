@@ -1,4 +1,4 @@
-﻿using DeskBox.Contracts;
+using DeskBox.Contracts;
 using DeskBox.Controls;
 using DeskBox.Controls.WidgetContents;
 using DeskBox.Helpers;
@@ -534,6 +534,12 @@ public sealed partial class ContentWidgetWindow
 
     private void PushToBottom(bool showWindow = true)
     {
+        if (Config.IsAlwaysOnTop)
+        {
+            ApplyAlwaysOnTopLayer(showWindow);
+            return;
+        }
+
         IsRaisedFromManager = false;
         IsAtDesktopLayer = true;
         WidgetLayerService.MoveToDesktopBottom(HWnd, showWindow);

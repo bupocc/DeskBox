@@ -70,4 +70,9 @@ public sealed record WidgetCompactPresentation(
     // between frames, but the shell must apply those diffs in place: rebuilding
     // the marquee, adaptive layout, and live-change pulse on every tick reads as
     // the capsule jumping once per second.
-    bool IsLiveTextUpdate = false);
+    bool IsLiveTextUpdate = false,
+    // Explicit progress bar color. Pomodoro owns a phase accent (focus red,
+    // short-break green, long-break teal) that has nothing to do with the
+    // shared todo overdue/complete palette, so it paints the capsule progress
+    // bar itself. Null keeps the shell's existing semantics.
+    Windows.UI.Color? ProgressColor = null);

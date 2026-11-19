@@ -1508,6 +1508,7 @@
   "Widget.ChangeMappedPath": "मैप किया गया पथ बदलें",
   "Widget.IconView": "चिह्न दृश्य",
   "Widget.ListView": "सूची दृश्य",
+  "Widget.AlwaysOnTop": "हमेशा ऊपर",
   "Widget.LockPosition": "स्थिति लॉक करें",
   "Widget.LockSize": "आकार लॉक करें",
   "Widget.Lock.Hint": "लॉक करने से सिर्फ ड्रैग और रिसाइज़ रुकता है; पोज़िशन रिस्टोर होने, डिस्प्ले बदलने या ग्रुप दोबारा क्रम में होने पर विजेट अब भी हिलते हैं",

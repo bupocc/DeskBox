@@ -1508,6 +1508,7 @@
   "Widget.ChangeMappedPath": "Change mapped path",
   "Widget.IconView": "Icon view",
   "Widget.ListView": "List view",
+  "Widget.AlwaysOnTop": "Always on top",
   "Widget.LockPosition": "Lock position",
   "Widget.LockSize": "Lock size",
   "Widget.Lock.Hint": "Locking only blocks dragging and resizing; widgets still move when positions are restored, displays change, or groups rearrange",

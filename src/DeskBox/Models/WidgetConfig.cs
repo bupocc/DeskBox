@@ -137,6 +137,14 @@ public class WidgetConfig
     /// <summary>Whether resizing this widget is locked.</summary>
     public bool IsSizeLocked { get; set; }
 
+    /// <summary>
+    /// Keeps this widget above normal application windows. The temporary raise
+    /// that follows a click is owned by the z-order pipeline and always falls
+    /// back to the desktop layer; this flag is the user-level opt-out that
+    /// survives focus changes and restarts.
+    /// </summary>
+    public bool IsAlwaysOnTop { get; set; }
+
     /// <summary>Whether this widget was manually left in its compact state.</summary>
     public bool IsCollapsed { get; set; }
 

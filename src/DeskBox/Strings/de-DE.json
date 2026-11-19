@@ -1505,6 +1505,7 @@
   "Widget.ChangeMappedPath": "Zugeordneten Pfad ändern",
   "Widget.IconView": "Symbolansicht",
   "Widget.ListView": "Listenansicht",
+  "Widget.AlwaysOnTop": "Immer im Vordergrund",
   "Widget.LockPosition": "Position sperren",
   "Widget.LockSize": "Größe sperren",
   "Widget.Lock.Hint": "Das Sperren verhindert nur Ziehen und Größenänderung; Widgets bewegen sich weiterhin, wenn Positionen wiederhergestellt, Displays gewechselt oder Gruppen neu angeordnet werden",

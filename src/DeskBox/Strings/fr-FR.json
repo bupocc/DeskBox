@@ -1508,6 +1508,7 @@
   "Widget.ChangeMappedPath": "Modifier le chemin mappé",
   "Widget.IconView": "Vue par icône",
   "Widget.ListView": "Vue en liste",
+  "Widget.AlwaysOnTop": "Toujours au premier plan",
   "Widget.LockPosition": "Verrouiller la position",
   "Widget.LockSize": "Verrouiller la taille",
   "Widget.Lock.Hint": "Verrouiller bloque seulement le déplacement et le redimensionnement ; les widgets bougent toujours lors d’une restauration de positions, d’un changement d’écran ou d’un réarrangement de groupe",

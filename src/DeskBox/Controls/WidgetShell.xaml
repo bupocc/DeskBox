@@ -635,6 +635,7 @@
                     CornerRadius="7"
                     Background="{ThemeResource AccentFillColorDefaultBrush}"
                     IsHitTestVisible="False"
+                    SizeChanged="CompactBadge_SizeChanged"
                     Visibility="Collapsed">
                     <TextBlock
                         x:Name="CompactBadgeText"

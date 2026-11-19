@@ -451,6 +451,13 @@ public abstract partial class WidgetWindowBase
 
     private void RestoreDesktopPinnedBottomState(string reason)
     {
+        if (Config.IsAlwaysOnTop)
+        {
+            // Pinned widgets never return to the desktop band on their own.
+            ApplyAlwaysOnTopLayer(showWindow: false);
+            return;
+        }
+
         if (_expandedWidgetLayerLeaseGeneration != 0)
         {
             // The expanded capsule owns the top of the desktop band until its

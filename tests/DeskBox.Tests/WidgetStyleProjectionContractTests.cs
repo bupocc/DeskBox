@@ -94,6 +94,9 @@ public sealed class WidgetStyleProjectionContractTests
         "items", "fileAddedAtByPath", "fileAddedAtTrackingInitialized",
         // visibility + lock state
         "isVisible", "isDisabled", "isPositionLocked", "isSizeLocked",
+        // per-device z-order behavior (the widget pin lives in the local layout,
+        // like the lock flags above; it is not a style the remote side renders)
+        "isAlwaysOnTop",
         // compact/collapse state + per-widget density — layout, not style
         "isCollapsed", "compactWidth", "iconSizeOverride",
     };

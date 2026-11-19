@@ -1508,6 +1508,7 @@
   "Widget.ChangeMappedPath": "매핑된 폴더 변경",
   "Widget.IconView": "아이콘 보기",
   "Widget.ListView": "목록 보기",
+  "Widget.AlwaysOnTop": "항상 위에",
   "Widget.LockPosition": "위치 잠금",
   "Widget.LockSize": "크기 잠금",
   "Widget.Lock.Hint": "잠금은 끌기와 크기 조정만 차단하며, 위치 복원, 디스플레이 변경 또는 그룹 재정렬 시에는 여전히 이동됩니다",

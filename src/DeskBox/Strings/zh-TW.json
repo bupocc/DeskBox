@@ -220,6 +220,7 @@
   "Settings.About.Developer": "開發者：朱天雨 · GitHub：{0}",
   "Settings.Capsule.AnimationDuration.Description": "控制展開與收起過渡的持續時間",
   "Widget.SelectedCount": "已選擇 {0} 項",
+  "Widget.AlwaysOnTop": "置頂顯示",
   "Widget.LockPosition": "鎖定位置",
   "Settings.QuickCapture.ShowCreatedTime.Description": "在隨記記錄中顯示建立時間",
   "Settings.Weather.Title": "天氣",

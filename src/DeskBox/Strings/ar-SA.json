@@ -1508,6 +1508,7 @@
   "Widget.ChangeMappedPath": "تغيير المسار المعين",
   "Widget.IconView": "عرض الأيقونة",
   "Widget.ListView": "عرض القائمة",
+  "Widget.AlwaysOnTop": "دائماً في الأعلى",
   "Widget.LockPosition": "قفل الموضع",
   "Widget.LockSize": "قفل الحجم",
   "Widget.Lock.Hint": "القفل يمنع السحب وتغيير الحجم فقط؛ تظل الأدوات تتحرك عند استعادة المواضع أو تغيير الشاشات أو إعادة ترتيب المجموعات",

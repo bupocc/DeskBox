@@ -1505,6 +1505,7 @@
   "Widget.ChangeMappedPath": "マップパスを変更",
   "Widget.IconView": "アイコン表示",
   "Widget.ListView": "リスト表示",
+  "Widget.AlwaysOnTop": "常に手前に表示",
   "Widget.LockPosition": "位置をロック",
   "Widget.LockSize": "サイズをロック",
   "Widget.Lock.Hint": "ロックで防げるのはドラッグとサイズ変更だけです。位置の復元、ディスプレイの変更、グループの再整列では移動することがあります",

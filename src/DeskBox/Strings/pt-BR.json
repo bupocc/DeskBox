@@ -1505,6 +1505,7 @@
   "Widget.ChangeMappedPath": "Alterar caminho mapeado",
   "Widget.IconView": "Exibição em ícones",
   "Widget.ListView": "Exibição em lista",
+  "Widget.AlwaysOnTop": "Sempre visível",
   "Widget.LockPosition": "Bloquear posição",
   "Widget.LockSize": "Bloquear tamanho",
   "Widget.Lock.Hint": "Bloquear apenas impede arrastar e redimensionar; os widgets ainda se movem quando as posições são restauradas, os monitores mudam ou os grupos são reorganizados",

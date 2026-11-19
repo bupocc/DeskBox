@@ -1,4 +1,4 @@
-﻿// Copyright (c) DeskBox. All rights reserved.
+// Copyright (c) DeskBox. All rights reserved.
 
 using DeskBox.Helpers;
 using DeskBox.Models;
@@ -46,8 +46,56 @@ public abstract partial class WidgetWindowBase
         OnElevated();
     }
 
+    /// <summary>
+    /// User-level "always on top" (widget context menu). A pinned widget leaves
+    /// the desktop layer for the topmost band and stays there across focus
+    /// changes; every funnel that beds windows must therefore consult
+    /// <see cref="WidgetConfig.IsAlwaysOnTop"/> before moving this window down.
+    /// </summary>
+    protected void ApplyAlwaysOnTopLayer(bool showWindow = true)
+    {
+        IsAtDesktopLayer = false;
+        IsRaisedFromManager = false;
+        KeepRaisedUntilDeactivate = false;
+        RestoreDesktopLayerWhenIdle = false;
+        TopMostSafetyTimer?.Stop();
+        Win32Helper.SetWindowTopMost(HWnd, showWindow);
+        App.LogVerbose($"[ZOrder] {LogPrefix} AlwaysOnTop held hwnd=0x{HWnd.ToInt64():X}");
+    }
+
+    /// <summary>Reapplies the persisted pin state after a toggle or a restart.</summary>
+    public void ApplyAlwaysOnTopPreference()
+    {
+        if (!Visible || IsClosing || HWnd == IntPtr.Zero)
+        {
+            return;
+        }
+
+        if (Config.IsAlwaysOnTop)
+        {
+            ApplyAlwaysOnTopLayer(showWindow: false);
+            return;
+        }
+
+        IsAtDesktopLayer = true;
+        IsRaisedFromManager = false;
+        KeepRaisedUntilDeactivate = false;
+        RestoreDesktopLayerWhenIdle = false;
+        TopMostSafetyTimer?.Stop();
+        WidgetLayerService.MoveToDesktopBottom(HWnd, showWindow: false);
+        App.LogVerbose($"[ZOrder] {LogPrefix} AlwaysOnTop released hwnd=0x{HWnd.ToInt64():X}");
+        App.Current.WidgetManager?.QueueIdleWidgetZOrderNormalization(
+            $"{LogPrefix}-always-on-top-released");
+    }
+
     protected void HoldTemporaryTopMost(bool showWindow = true)
     {
+        if (Config.IsAlwaysOnTop)
+        {
+            ApplyAlwaysOnTopLayer(showWindow);
+            return;
+        }
+
         if (WidgetLayerService.UsesDesktopPinnedMode())
         {
             IsAtDesktopLayer = true;
@@ -266,6 +314,12 @@ public abstract partial class WidgetWindowBase
     protected void ClearTopMostOnly()
     {
         IsRaisedFromManager = false;
+        if (Config.IsAlwaysOnTop)
+        {
+            // A pinned widget owns its band; flyout/drag teardown must not bed it.
+            return;
+        }
+
         IntPtr foreground = WidgetLayerService.ClearTopMostPreservingForeground(
             HWnd,
             out RelativeLayerRestoreDisposition disposition);

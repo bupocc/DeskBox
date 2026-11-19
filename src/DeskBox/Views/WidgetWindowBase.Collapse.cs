@@ -4645,6 +4645,15 @@ public abstract partial class WidgetWindowBase
 
         KeepRaisedUntilDeactivate = false;
         RestoreDesktopLayerWhenIdle = false;
+        if (Config.IsAlwaysOnTop)
+        {
+            // Collapsing out of the expanded state must not drop a pinned
+            // widget back to the desktop band.
+            ReleaseExpandedWidgetLayerLease("expanded-state-restored-pinned");
+            ApplyAlwaysOnTopLayer(showWindow: false);
+            return;
+        }
+
         IsAtDesktopLayer = true;
         WidgetLayerService.MoveToDesktopBottom(HWnd);
         ReleaseExpandedWidgetLayerLease("expanded-state-restored");
