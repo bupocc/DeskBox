@@ -396,11 +396,27 @@ public sealed partial class ContentWidgetWindow
             }
 
             IntPtr foregroundWindow = Win32Helper.GetForegroundWindow();
-            if (foregroundWindow == IntPtr.Zero ||
-                App.Current.IsDeskBoxWindow(foregroundWindow))
+            if (foregroundWindow == IntPtr.Zero)
             {
                 // Zero means activation is mid-transition (owned popover
                 // hand-off); do not read the gap as a DeskBox leave.
+                RestoreDesktopLayerWhenIdle = false;
+                return;
+            }
+
+            // A popover of this very widget keeps the widget up; another
+            // DeskBox window (a sibling widget, the settings page) means the
+            // user moved on, so this widget must return to the desktop band
+            // instead of hovering above other applications.
+            IntPtr foregroundRoot =
+                Win32Helper.GetAncestor(foregroundWindow, Win32Helper.GA_ROOTOWNER);
+            if (foregroundRoot == IntPtr.Zero)
+            {
+                foregroundRoot = foregroundWindow;
+            }
+
+            if (foregroundRoot == HWnd)
+            {
                 RestoreDesktopLayerWhenIdle = false;
                 return;
             }

@@ -49,19 +49,29 @@ public sealed class RelativeLayerRestorePolicyTests
         Assert.Equal(RelativeLayerRestoreDisposition.DesktopBottom, disposition);
     }
 
-    [Theory]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    public void DeskBoxForeground_PreservesPeerOrder(
-        bool foregroundIsSelf,
-        bool foregroundIsDeskBox)
+    [Fact]
+    public void OwnForeground_PreservesPeerOrder()
     {
         RelativeLayerRestoreDisposition disposition = RelativeLayerRestorePolicy.Decide(
             hasForeground: true,
             foregroundIsDesktopShell: false,
-            foregroundIsSelf,
-            foregroundIsDeskBox);
+            foregroundIsSelf: true,
+            foregroundIsDeskBox: true);
 
         Assert.Equal(RelativeLayerRestoreDisposition.PreservePeerOrder, disposition);
+    }
+
+    [Fact]
+    public void OtherDeskBoxWidgetForeground_ReturnsWidgetToDesktopBottom()
+    {
+        // Selecting a sibling widget must not keep this one floating above
+        // foreign applications.
+        RelativeLayerRestoreDisposition disposition = RelativeLayerRestorePolicy.Decide(
+            hasForeground: true,
+            foregroundIsDesktopShell: false,
+            foregroundIsSelf: false,
+            foregroundIsDeskBox: true);
+
+        Assert.Equal(RelativeLayerRestoreDisposition.DesktopBottom, disposition);
     }
 }
