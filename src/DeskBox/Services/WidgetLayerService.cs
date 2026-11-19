@@ -20,6 +20,18 @@ public static class WidgetLayerService
     private static IntPtr s_cachedDesktopIconView;
     private static bool s_startupDesktopLayerAttachmentDeferred;
 
+    /// <summary>
+    /// Installed by <see cref="WidgetManager"/>: true when the handle belongs to
+    /// a widget the user pinned ("always on top"). A pinned widget rests in the
+    /// topmost band, which the desktop-band funnels here cannot express — their
+    /// Explorer icon-layer attach deliberately clears WS_EX_TOPMOST, so those
+    /// funnels must skip it instead of silently dropping the pin.
+    /// </summary>
+    internal static Func<IntPtr, bool>? PinProbe { get; set; }
+
+    private static bool IsPinnedWindow(IntPtr windowHandle) =>
+        windowHandle != IntPtr.Zero && PinProbe?.Invoke(windowHandle) == true;
+
     internal static void BeginStartupDesktopLayerAttachmentDeferral()
     {
         Volatile.Write(ref s_startupDesktopLayerAttachmentDeferred, true);
@@ -73,6 +85,16 @@ public static class WidgetLayerService
         IntPtr windowHandle,
         bool showWindow = true)
     {
+        if (IsPinnedWindow(windowHandle))
+        {
+            // A pinned widget is in the topmost band; bedding it would clear
+            // WS_EX_TOPMOST and silently drop the user's pin.
+            Win32Helper.SetWindowTopMost(windowHandle, showWindow);
+            App.LogVerbose(
+                $"[WidgetLayer] MoveToDesktopBottom skipped pinned hwnd=0x{windowHandle.ToInt64():X}");
+            return;
+        }
+
         ApplyDesktopPinnedActivationStyle(windowHandle);
 
         // Desktop-pinned mode always rests inside Explorer. Dynamic mode uses
@@ -423,6 +445,15 @@ public static class WidgetLayerService
     /// </summary>
     public static bool TryBringAbovePeerWidgetsAtDesktopLayer(IntPtr windowHandle)
     {
+        if (IsPinnedWindow(windowHandle))
+        {
+            // The topmost band already sits above every peer widget and every
+            // application; the desktop-band insert below would first attach the
+            // window to the Explorer icon layer, which clears WS_EX_TOPMOST.
+            Win32Helper.SetWindowTopMost(windowHandle, showWindow: false);
+            return true;
+        }
+
         // Ownership of SHELLDLL_DefView only enforces a minimum position
         // (above the owner); it never confines the window to the owner band.
         // HWND_TOP therefore reaches the top of the whole normal band — above
@@ -1117,6 +1148,17 @@ public static class WidgetLayerService
             App.LogVerbose(
                 $"[Startup] Desktop-layer attach deferred hwnd=0x{windowHandle.ToInt64():X}");
             return false;
+        }
+
+        if (IsPinnedWindow(windowHandle))
+        {
+            // Last line of defence: this is where a bedded window loses
+            // WS_EX_TOPMOST. A pinned window keeps the topmost band and reports
+            // success so the caller does not run its bedding fallback either.
+            Win32Helper.SetWindowTopMost(windowHandle, showWindow: false);
+            App.LogVerbose(
+                $"[WidgetLayer] Desktop attach skipped pinned hwnd=0x{windowHandle.ToInt64():X}");
+            return true;
         }
 
         IntPtr desktopIconView = FindDesktopIconView();

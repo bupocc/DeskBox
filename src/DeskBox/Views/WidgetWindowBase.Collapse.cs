@@ -4383,6 +4383,23 @@ public abstract partial class WidgetWindowBase
     private void RaiseForExpandedState()
     {
         CancelDeferredExpandedLayerRestore();
+
+        // A pinned widget belongs to the topmost band, so the desktop-band peer
+        // ordering below would hand it to TryAttachToDesktopIconLayer, which
+        // clears WS_EX_TOPMOST. Keep it topmost and only take the lease that
+        // the collapse/expand pipeline expects.
+        if (Config.IsAlwaysOnTop)
+        {
+            ApplyAlwaysOnTopLayer(showWindow: false);
+            if (!_isRaisedForExpandedState)
+            {
+                HoldExpandedPeerLayerLease(restoreDesktopLayer: false);
+            }
+
+            AcquireExpandedWidgetLayerLease("expanded-state-pinned");
+            return;
+        }
+
         if (_isRaisedForExpandedState)
         {
             if (!WidgetLayerService.TryBringAbovePeerWidgetsAtDesktopLayer(HWnd))

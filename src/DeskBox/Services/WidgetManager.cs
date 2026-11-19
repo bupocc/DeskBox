@@ -1,4 +1,4 @@
-﻿using DeskBox.Models;
+using DeskBox.Models;
 using DeskBox.Helpers;
 using DeskBox.Contracts;
 using DeskBox.Controls.WidgetContents;
@@ -352,6 +352,29 @@ public sealed partial class WidgetManager
             .ToList();
     }
 
+    /// <summary>
+    /// Answer for <see cref="WidgetLayerService.PinProbe"/>: the layer service
+    /// has no view of widget configs, so it asks here whether a handle belongs to
+    /// a user-pinned widget before bedding it into the desktop band.
+    /// </summary>
+    private bool IsPinnedWindowHandle(IntPtr windowHandle)
+    {
+        if (windowHandle == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        foreach (IDesktopWidgetWindow window in GetLoadedDesktopWindows())
+        {
+            if (window.WindowHandle == windowHandle)
+            {
+                return IsPinnedByUser(window);
+            }
+        }
+
+        return false;
+    }
+
     public void BeginWidgetInteraction(string reason)
     {
         App.NotifyMemoryCleanupActivity();
@@ -577,6 +600,7 @@ public sealed partial class WidgetManager
         IconHelper.ConfigurePerformanceCacheBudget(
             _lastPerformanceSettings.CacheBudget);
         InitializeWidgetGroupPresentationDefaults();
+        WidgetLayerService.PinProbe = IsPinnedWindowHandle;
         _settingsService.SettingsChanged += OnSettingsChanged;
         _settingsService.AppearancePreviewChanged += ApplyAppearancePreview;
         _themeService.AppearanceChanged += ApplyAppearancePreview;
