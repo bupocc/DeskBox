@@ -14,13 +14,20 @@ public sealed partial class AppUpdateService : IAppUpdateService
 {
     // This distribution ships from its own GitHub repository: the fork carries
     // widgets the upstream vendor does not, so an upstream installer would
-    // silently downgrade the install. The release feed is therefore the fork's
-    // "latest release" endpoint, and no other repository or vendor manifest is
-    // consulted by default (the manifest channel stays available to callers
-    // that pass an explicit URL, which is how the tests pin the parsing rules).
+    // silently downgrade the install. Both update sources therefore point at
+    // the fork, and no other repository or vendor manifest is ever consulted.
     public const string GitHubRepositorySlug = "bupocc/DeskBox";
     public const string DefaultGitHubLatestReleaseApiUrl = "https://api.github.com/repos/" + GitHubRepositorySlug + "/releases/latest";
     public const string DefaultManualDownloadUrl = "https://github.com/" + GitHubRepositorySlug + "/releases/latest";
+
+    // Primary feed: a plain JSON file on the repository's default branch. It is
+    // served by raw.githubusercontent.com's CDN, so a check costs no GitHub API
+    // quota. The anonymous API allowance is 60 requests/hour per egress IP, and
+    // every caller behind the same NAT competes for it, which made checks fail
+    // with 403s on machines that share an address. The GitHub release endpoint
+    // stays as the fallback for the (rare) case where the static file lags.
+    public const string DefaultManifestUrl =
+        "https://raw.githubusercontent.com/" + GitHubRepositorySlug + "/main/update/stable.json";
 
     private readonly HttpClient _httpClient;
     private readonly string? _manifestUrl;
@@ -53,11 +60,14 @@ public sealed partial class AppUpdateService : IAppUpdateService
         _httpClient.DefaultRequestHeaders.UserAgent.Clear();
         _httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("DeskBox", GetCurrentAppVersion()));
 
-        // No manifest URL means the JSON feed channel is disabled: the GitHub
-        // release endpoint is the only update source for this distribution.
-        _manifestUrl = string.IsNullOrWhiteSpace(manifestUrl)
-            ? null
-            : manifestUrl;
+        // An empty string keeps the feed channel disabled for callers that want
+        // to exercise the GitHub-only path; omitting the argument uses the
+        // static manifest, which is the shipping default.
+        _manifestUrl = manifestUrl is null
+            ? DefaultManifestUrl
+            : string.IsNullOrWhiteSpace(manifestUrl)
+                ? null
+                : manifestUrl;
         _githubLatestReleaseApiUrl = string.IsNullOrWhiteSpace(githubLatestReleaseApiUrl)
             ? DefaultGitHubLatestReleaseApiUrl
             : githubLatestReleaseApiUrl;
@@ -199,28 +209,21 @@ public sealed partial class AppUpdateService : IAppUpdateService
 
     public async Task<AppUpdateCheckResult> CheckForUpdatesAsync(string currentVersion, CancellationToken cancellationToken = default)
     {
-        // GitHub first: this build's releases live there, and a vendor-manifest
-        // answer must never win over the fork's own (the vendor channel would
-        // offer installers that drop the fork-only widgets). The manifest feed
-        // is a fallback for callers that explicitly configure one, and is
-        // skipped entirely when it is disabled.
+        // The static manifest is the primary source: it answers from a CDN, it
+        // costs no API quota, and it is the only feed this fork controls
+        // end-to-end. The GitHub release endpoint backs it up when the file is
+        // unreachable, and a manifest answer must never be overridden by the
+        // API (the API can lag a freshly published release by a few seconds).
+        if (_manifestUrl is not null)
+        {
+            var manifestResult = await CheckManifestForUpdatesAsync(currentVersion, cancellationToken);
+            if (manifestResult.Status is AppUpdateCheckStatus.UpdateAvailable or AppUpdateCheckStatus.UpToDate)
+            {
+                return SetLastCheckResult(manifestResult);
+            }
+        }
+
         var githubResult = await CheckGitHubLatestReleaseForUpdatesAsync(currentVersion, cancellationToken);
-        if (githubResult.Status is AppUpdateCheckStatus.UpdateAvailable or AppUpdateCheckStatus.UpToDate)
-        {
-            return SetLastCheckResult(githubResult);
-        }
-
-        if (_manifestUrl is null)
-        {
-            return SetLastCheckResult(githubResult);
-        }
-
-        var manifestResult = await CheckManifestForUpdatesAsync(currentVersion, cancellationToken);
-        if (manifestResult.Status is AppUpdateCheckStatus.UpdateAvailable or AppUpdateCheckStatus.UpToDate)
-        {
-            return SetLastCheckResult(manifestResult);
-        }
-
         return SetLastCheckResult(githubResult);
     }
 
@@ -737,6 +740,26 @@ public sealed partial class AppUpdateService : IAppUpdateService
     public static async Task<AppUpdateManifest?> FetchContentManifestAsync(
         CancellationToken cancellationToken = default)
     {
+        // Release notes ride the same static feed as the update check: the file
+        // carries a per-locale ReleaseNotes map, so the notes window does not
+        // need an API call (and keeps working on networks where the anonymous
+        // GitHub API allowance is exhausted). The API stays as the fallback.
+        try
+        {
+            var manifest = await FetchContentManifestAsync(
+                DefaultManifestUrl,
+                s_contentHttpClient,
+                cancellationToken);
+            if (manifest is not null)
+            {
+                return manifest;
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException or IOException)
+        {
+            // Fall through to the GitHub release endpoint.
+        }
+
         try
         {
             var release = await FetchLatestGitHubReleaseAsync(
