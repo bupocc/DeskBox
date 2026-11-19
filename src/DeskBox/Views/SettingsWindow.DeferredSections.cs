@@ -35,6 +35,14 @@ public sealed partial class SettingsWindow
         {
             section.RefreshFromSettings();
         }
+        if (_currentSettingsSection == "PomodoroSettings" &&
+            _settingsSectionElements.TryGetValue(
+                "PomodoroSettings",
+                out FrameworkElement? pomodoro) &&
+            pomodoro is PomodoroSettingsSection pomodoroSection)
+        {
+            pomodoroSection.RefreshFromSettings();
+        }
     }
 
     private void UpdateSearchSettingsActivity()

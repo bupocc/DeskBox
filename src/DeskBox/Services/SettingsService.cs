@@ -738,6 +738,18 @@ settings.ShowListItemDetails = false;
 settings.ShowFileItemPathTooltips = true;
 settings.CustomAccentColor = "#0078D4";
 settings.FocusClickedWidgetOnRaise = false;
+        // Pomodoro timer resets go through the slice so the facade-access
+        // ratchet stays untouched; the legacy single-break key is dropped.
+        PomodoroSettingsSlice pomodoro = settings.Pomodoro;
+        pomodoro.PomodoroRoundCount = PomodoroSettingsPolicy.DefaultRoundCount;
+        pomodoro.PomodoroFocusMinutes = PomodoroSettingsPolicy.DefaultFocusMinutes;
+        pomodoro.PomodoroShortBreakMinutes = PomodoroSettingsPolicy.DefaultShortBreakMinutes;
+        pomodoro.PomodoroLongBreakMinutes = PomodoroSettingsPolicy.DefaultLongBreakMinutes;
+        pomodoro.PomodoroCompletionSoundEnabled =
+            PomodoroSettingsPolicy.DefaultCompletionSoundEnabled;
+        pomodoro.PomodoroCompletionNotificationEnabled =
+            PomodoroSettingsPolicy.DefaultCompletionNotificationEnabled;
+        pomodoro.PomodoroBreakMinutes = null;
     }
 
     public SettingsService(ISettingsPersistenceSink? persistenceSink = null)
@@ -896,6 +908,7 @@ settings.FocusClickedWidgetOnRaise = false;
                 }
 
                 changed |= PerformanceSettingsPolicy.Normalize(_settings);
+                changed |= PomodoroSettingsPolicy.Normalize(_settings);
                 changed |= NormalizePresentationSettings(_settings);
                 changed |= NormalizeAppearanceSettings(_settings);
                 changed |= NormalizeFeatureWidgetSettings(_settings);
@@ -1644,6 +1657,7 @@ settings.FocusClickedWidgetOnRaise = false;
         lock (_lock)
         {
             PerformanceSettingsPolicy.Normalize(_settings);
+            PomodoroSettingsPolicy.Normalize(_settings);
             NormalizePresentationSettings(_settings);
             NormalizeAppearanceSettings(_settings);
             NormalizeFeatureWidgetSettings(_settings);

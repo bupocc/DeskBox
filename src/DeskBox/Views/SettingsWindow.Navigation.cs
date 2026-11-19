@@ -52,6 +52,7 @@ public sealed partial class SettingsWindow
         // FeatureWidgets family
         "QuickCaptureSettings", "TodoSettings", "MusicSettings",
         "WeatherSettings", "GlanceSettings", "SearchSettings",
+        "PomodoroSettings",
         // Appearance family
         "AppearanceMaterialSettings", "AppearanceDensitySettings",
         "AppearanceWindowSettings", "AppearanceAnimationSettings",

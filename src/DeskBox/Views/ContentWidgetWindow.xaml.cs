@@ -47,6 +47,7 @@ public sealed partial class ContentWidgetWindow : WidgetWindowBase, IDesktopWidg
     private long _titleRenameOpenedAtTick;
     private bool _compactPresentationRefreshQueued;
     private INotifyPropertyChanged? _compactPresentationSource;
+    private PomodoroWidgetViewModel? _pomodoroCompletionSource;
     private IWidgetFeedbackSource? _feedbackSource;
     private IWidgetHostContextMenuSource? _hostContextMenuSource;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _autoRestoreTimer;
@@ -155,6 +156,8 @@ public sealed partial class ContentWidgetWindow : WidgetWindowBase, IDesktopWidg
                 CreateQuickCaptureCompactPresentation(quickCapture, contentMode),
             WeatherWidgetContentAdapter weather => CreateWeatherCompactPresentation(weather, contentMode),
             SearchWidgetContentAdapter => CreateSearchCompactPresentation(contentMode, localization),
+            PomodoroWidgetContentAdapter pomodoro =>
+                CreatePomodoroCompactPresentation(pomodoro, contentMode),
             _ => new WidgetCompactPresentation(
                 _titleViewModel.DisplayName,
                 string.Empty,
@@ -287,6 +290,49 @@ public sealed partial class ContentWidgetWindow : WidgetWindowBase, IDesktopWidg
             UseStackedText: stacked,
             EnableMarquee: true,
             LiveStateKey: string.Join("|", _titleViewModel.DisplayName, recentKey));
+    }
+
+    private WidgetCompactPresentation CreatePomodoroCompactPresentation(
+        PomodoroWidgetContentAdapter pomodoro,
+        string contentMode)
+    {
+        PomodoroWidgetViewModel viewModel = pomodoro.ViewModel;
+        bool minimal = contentMode == SettingsService.WidgetCompactContentModeMinimal;
+        string title = string.IsNullOrWhiteSpace(viewModel.CountdownText)
+            ? _titleViewModel.DisplayName
+            : viewModel.CountdownText;
+
+        var summaryParts = new List<string>(2);
+        if (!minimal)
+        {
+            if (!string.IsNullOrWhiteSpace(viewModel.PhaseText))
+            {
+                summaryParts.Add(viewModel.PhaseText);
+            }
+
+            if (!string.IsNullOrWhiteSpace(viewModel.RoundSummaryText))
+            {
+                summaryParts.Add(viewModel.RoundSummaryText);
+            }
+        }
+
+        return new WidgetCompactPresentation(
+            title,
+            string.Join(" · ", summaryParts),
+            _descriptor.DefaultGlyph,
+            string.Empty,
+            ShowPrimaryAction: true,
+            PrimaryActionGlyph: viewModel.IsRunning ? "\uE769" : "\uE102",
+            UseStackedText: !minimal,
+            EnableMarquee: true,
+            IsAttention: viewModel.IsCompletionAlertActive,
+            LiveStateKey: string.Join(
+                "|",
+                viewModel.CountdownText,
+                viewModel.PhaseText,
+                viewModel.RoundSummaryText,
+                viewModel.IsRunning ? "1" : "0",
+                viewModel.IsCompletionAlertActive ? "1" : "0"));
     }
 
     private WidgetCompactPresentation CreateMusicCompactPresentation(
@@ -539,6 +585,12 @@ public sealed partial class ContentWidgetWindow : WidgetWindowBase, IDesktopWidg
         if (CurrentContent is SearchWidgetContentAdapter)
         {
             App.Current.OpenSearchPopup();
+            return;
+        }
+
+        if (CurrentContent is PomodoroWidgetContentAdapter pomodoro)
+        {
+            pomodoro.ViewModel.StartPause();
             return;
         }
 
@@ -1155,6 +1207,7 @@ IsHideAnimationRunning = true;
             MusicWidgetContentAdapter music => music.ViewModel,
             WeatherWidgetContentAdapter weather => weather.ViewModel,
             QuickCaptureWidgetContentAdapter quickCapture => quickCapture.ViewModel,
+            PomodoroWidgetContentAdapter pomodoro => pomodoro.ViewModel,
             _ => null
         };
 
@@ -1185,6 +1238,52 @@ IsHideAnimationRunning = true;
             historyService.RecentQueriesChanged += OnRecentQueriesChanged;
             _subscribedSearchHistoryService = historyService;
         }
+
+        AttachPomodoroCompletionSource(content);
+    }
+
+    private void AttachPomodoroCompletionSource(IWidgetContent content)
+    {
+        if (_pomodoroCompletionSource is not null)
+        {
+            _pomodoroCompletionSource.CompletionOccurred -=
+                PomodoroCompletionSource_CompletionOccurred;
+            _pomodoroCompletionSource = null;
+        }
+
+        if (content is PomodoroWidgetContentAdapter pomodoro)
+        {
+            _pomodoroCompletionSource = pomodoro.ViewModel;
+            _pomodoroCompletionSource.CompletionOccurred +=
+                PomodoroCompletionSource_CompletionOccurred;
+        }
+    }
+
+    private void PomodoroCompletionSource_CompletionOccurred(object? sender, EventArgs e)
+    {
+        if (sender is not PomodoroWidgetViewModel viewModel)
+        {
+            return;
+        }
+
+        SettingsService settingsService = SettingsService;
+        if (settingsService.Settings.Pomodoro.PomodoroCompletionNotificationEnabled)
+        {
+            LocalizationService localization = App.Current.LocalizationService;
+            App.Current.NativeNotificationService?.TryShow(
+                localization.T("Pomodoro.Notification.Title"),
+                localization.Format(
+                    "Pomodoro.Notification.Message",
+                    viewModel.PhaseText,
+                    viewModel.RoundSummaryText));
+        }
+
+        if (settingsService.Settings.Pomodoro.PomodoroCompletionSoundEnabled)
+        {
+            _ = PomodoroCompletionSoundService.TryPlay();
+        }
+
+        QueueCompactPresentationRefresh();
     }
 
     private void OnRecentQueriesChanged()
@@ -1358,6 +1457,12 @@ IsHideAnimationRunning = true;
                 _compactPresentationSource.PropertyChanged -= CompactPresentationSource_PropertyChanged;
                 _compactPresentationSource = null;
             }
+            if (_pomodoroCompletionSource is not null)
+            {
+                _pomodoroCompletionSource.CompletionOccurred -=
+                    PomodoroCompletionSource_CompletionOccurred;
+                _pomodoroCompletionSource = null;
+            }
             if (_subscribedSearchHistoryService is { } historyService)
             {
                 historyService.RecentQueriesChanged -= OnRecentQueriesChanged;
@@ -1460,6 +1565,7 @@ IsHideAnimationRunning = true;
                         WidgetKind.Music => "Music.Title",
                         WidgetKind.Glance => "Glance.Title",
                         WidgetKind.Search => "Search.Title",
+                        WidgetKind.Pomodoro => "Pomodoro.Title",
                         WidgetKind.SystemMonitor => "SystemMonitor.Title",
                         _ => ""
                     };

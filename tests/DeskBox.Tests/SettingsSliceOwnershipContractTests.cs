@@ -28,7 +28,7 @@ public sealed class SettingsSliceOwnershipContractTests
     [Fact]
     public void EverySlice_IsExposedAsGetOnlyAndJsonIgnored()
     {
-        Assert.Equal(13, SliceProperties.Length);
+        Assert.Equal(14, SliceProperties.Length);
         Assert.All(SliceProperties, p =>
         {
             Assert.False(p.CanWrite, $"{p.Name} must be get-only");
@@ -48,7 +48,10 @@ public sealed class SettingsSliceOwnershipContractTests
         // and lastRunVersion.
         // +2 = autoDownloadUpdates + showUpdateToastNotification (background
         // auto-download and update toasts).
-        Assert.Equal(243, FacadeProperties.Length);
+        // +7 = pomodoro timer settings, all owned by PomodoroSettingsSlice
+        // (durations, round count, sound/notification switches, and the
+        // nullable legacy single-break key).
+        Assert.Equal(250, FacadeProperties.Length);
 
         foreach (PropertyInfo facade in FacadeProperties)
         {

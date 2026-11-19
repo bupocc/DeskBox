@@ -243,13 +243,22 @@ public sealed class SettingsSliceContractBaselineTests
         Assert.Equal(24 * 60, s.CloudBackupIntervalMinutes);
         Assert.Equal(0L, s.CloudBackupLastSuccessUtcTicks);
         Assert.Equal(0L, s.CloudBackupLastFailureUtcTicks);
+        // Pomodoro timer (appended after the cloud-backup block; absent files
+        // deserialize to these policy defaults).
+        Assert.Equal(4, s.PomodoroRoundCount);
+        Assert.Equal(25, s.PomodoroFocusMinutes);
+        Assert.Equal(5, s.PomodoroShortBreakMinutes);
+        Assert.Equal(15, s.PomodoroLongBreakMinutes);
+        Assert.True(s.PomodoroCompletionSoundEnabled);
+        Assert.True(s.PomodoroCompletionNotificationEnabled);
+        Assert.Null(s.PomodoroBreakMinutes);
     }
 
     [Fact]
     public void SerializedMemberOrder_MatchesPreSliceDeclarationOrder()
     {
-        // Legacy prop set so the WhenWritingNull member is emitted too.
-        var s = new AppSettings { LegacyWidgetCapsuleModeEnabled = true };
+        // Legacy props set so the WhenWritingNull members are emitted too.
+        var s = new AppSettings { LegacyWidgetCapsuleModeEnabled = true, PomodoroBreakMinutes = 0 };
         using var doc = System.Text.Json.JsonDocument.Parse(
             System.Text.Json.JsonSerializer.Serialize(
                 s, DeskBox.Services.SettingsJsonContext.Default.AppSettings));
@@ -499,5 +508,12 @@ public sealed class SettingsSliceContractBaselineTests
         "cloudBackupLastSuccessUtcTicks",
         "cloudBackupLastFailureUtcTicks",
         "cloudBackupLastUnverifiedUtcTicks",
+        "pomodoroRoundCount",
+        "pomodoroFocusMinutes",
+        "pomodoroShortBreakMinutes",
+        "pomodoroLongBreakMinutes",
+        "pomodoroCompletionSoundEnabled",
+        "pomodoroCompletionNotificationEnabled",
+        "pomodoroBreakMinutes",
     ];
 }

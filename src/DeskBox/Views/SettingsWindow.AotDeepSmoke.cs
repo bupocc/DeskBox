@@ -32,7 +32,11 @@ public sealed partial class SettingsWindow
             "BackupRestoreSettings",
             "DataHealthSettings",
             "CompatibilityDiagnosticsSettings",
-            "PerformanceSettings"
+            "PerformanceSettings",
+            // Appended after the index-sensitive entries above: the smoke
+            // exercise reads deepSettingsRoutes[1], [5], [17] and [18], so new
+            // routes must be added at the end to keep those anchors stable.
+            "PomodoroSettings"
         ];
 
         string searchQuery = _localizationService.T("Settings.DataBackup.Title");

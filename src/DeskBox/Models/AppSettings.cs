@@ -71,6 +71,9 @@ public class AppSettings
     [JsonIgnore]
     public SearchSettingsSlice Search { get; } = new();
 
+    [JsonIgnore]
+    public PomodoroSettingsSlice Pomodoro { get; } = new();
+
     // ─── Serialization facade (wire contract, order-significant) ──
 
     /// <inheritdoc cref="CoreSettingsSlice.Theme"/>
@@ -824,4 +827,33 @@ public class AppSettings
 
     /// <inheritdoc cref="CloudBackupSettingsSlice.CloudBackupLastUnverifiedUtcTicks"/>
     public long CloudBackupLastUnverifiedUtcTicks { get => CloudBackup.CloudBackupLastUnverifiedUtcTicks; set => CloudBackup.CloudBackupLastUnverifiedUtcTicks = value; }
+
+    // ─── Pomodoro Timer (additive; absent files deserialize to the policy defaults) ───
+
+    /// <inheritdoc cref="PomodoroSettingsSlice.PomodoroRoundCount"/>
+    public int PomodoroRoundCount { get => Pomodoro.PomodoroRoundCount; set => Pomodoro.PomodoroRoundCount = value; }
+
+    /// <inheritdoc cref="PomodoroSettingsSlice.PomodoroFocusMinutes"/>
+    public int PomodoroFocusMinutes { get => Pomodoro.PomodoroFocusMinutes; set => Pomodoro.PomodoroFocusMinutes = value; }
+
+    /// <inheritdoc cref="PomodoroSettingsSlice.PomodoroShortBreakMinutes"/>
+    public int PomodoroShortBreakMinutes { get => Pomodoro.PomodoroShortBreakMinutes; set => Pomodoro.PomodoroShortBreakMinutes = value; }
+
+    /// <inheritdoc cref="PomodoroSettingsSlice.PomodoroLongBreakMinutes"/>
+    public int PomodoroLongBreakMinutes { get => Pomodoro.PomodoroLongBreakMinutes; set => Pomodoro.PomodoroLongBreakMinutes = value; }
+
+    /// <inheritdoc cref="PomodoroSettingsSlice.PomodoroCompletionSoundEnabled"/>
+    public bool PomodoroCompletionSoundEnabled { get => Pomodoro.PomodoroCompletionSoundEnabled; set => Pomodoro.PomodoroCompletionSoundEnabled = value; }
+
+    /// <inheritdoc cref="PomodoroSettingsSlice.PomodoroCompletionNotificationEnabled"/>
+    public bool PomodoroCompletionNotificationEnabled { get => Pomodoro.PomodoroCompletionNotificationEnabled; set => Pomodoro.PomodoroCompletionNotificationEnabled = value; }
+
+    /// <summary>
+    /// Legacy single break-length key from the pre-merge pomodoro build.
+    /// Migrated into <see cref="PomodoroShortBreakMinutes"/> by
+    /// <see cref="DeskBox.Services.PomodoroSettingsPolicy.Normalize"/> and
+    /// cleared. Omitted when null so existing profiles stay byte-stable.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? PomodoroBreakMinutes { get => Pomodoro.PomodoroBreakMinutes; set => Pomodoro.PomodoroBreakMinutes = value; }
 }

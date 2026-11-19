@@ -25,7 +25,8 @@ public sealed class AotStage5B4B1ContractTests
         "BackupRestoreSettings",
         "DataHealthSettings",
         "CompatibilityDiagnosticsSettings",
-        "PerformanceSettings"
+        "PerformanceSettings",
+        "PomodoroSettings"
     ];
 
     [Fact]

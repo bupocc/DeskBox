@@ -16,6 +16,7 @@ public sealed class ToggleSwitchAccessibleNameContractTests
     {
         { "src/DeskBox/Views/SettingsWindow.xaml", 51 },
         { "src/DeskBox/Views/SettingsSections/SearchSettingsSection.xaml", 4 },
+        { "src/DeskBox/Views/SettingsSections/PomodoroSettingsSection.xaml", 2 },
         { "src/DeskBox/Views/SettingsSections/GlanceWidgetSettingsSection.xaml", 4 },
         { "src/DeskBox/Views/SettingsSections/FileWidgetSettingsSection.xaml", 1 },
         { "src/DeskBox/Views/SettingsSections/DesktopOrganizationSettingsSection.xaml", 2 },

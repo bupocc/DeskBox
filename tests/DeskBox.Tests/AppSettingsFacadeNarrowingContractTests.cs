@@ -13,7 +13,7 @@ namespace DeskBox.Tests;
 /// grow (new schema field without a versioned migration) nor shrink (dropping
 /// a serialized field from every saved file) as part of ordinary refactoring.
 /// Serializing slice members directly was evaluated and rejected: the flat
-/// member order interleaves all 13 slices and the legacy
+/// member order interleaves all 14 slices and the legacy
 /// <c>widgetCapsuleModeEnabled</c> wire attributes live on the facade, so no
 /// byte-equivalent slice-serialization path exists (the disk schema is
 /// frozen; <see cref="SettingsSliceContractBaselineTests"/> pins the exact
@@ -44,7 +44,7 @@ public sealed class AppSettingsFacadeNarrowingContractTests
         // weatherIconStyle; +5 = schema v10 global widget background fields
         // (mode, unified/panorama image, dim, unified fit — all nullable,
         // carried by Migration_9_To_10); +1 = schema v11 text shadow switch
-        // (carried by Migration_10_To_11) (13 slice
+        // (carried by Migration_10_To_11) (14 slice
         // accessors and SchemaVersion are the
         // only other members). Growing this count adds a settings.json field
         // without a schema-versioned migration; shrinking
@@ -67,15 +67,20 @@ public sealed class AppSettingsFacadeNarrowingContractTests
         // +2 = autoDownloadUpdates + showUpdateToastNotification (background
         // auto-download and update toasts; additive — both deserialize to
         // the enabled default true).
-        Assert.Equal(243, Passthroughs.Length);
-        Assert.Equal(13, SliceAccessors.Length);
+        // +7 = pomodoro timer (focus/short/long durations, round count, and
+        // the sound + notification switches; additive — absent files
+        // deserialize to the PomodoroSettingsPolicy defaults) plus the
+        // nullable legacy pomodoroBreakMinutes key, which rides the same
+        // WhenWritingNull omission so existing profiles stay byte-stable.
+        Assert.Equal(250, Passthroughs.Length);
+        Assert.Equal(14, SliceAccessors.Length);
     }
 
     [Fact]
     public void EveryPassthrough_IsAFrozenSchemaMember_AndViceVersa()
     {
         // The facade IS the schema: with the WhenWritingNull member forced on,
-        // the serialized member set is exactly schemaVersion plus the 243
+        // the serialized member set is exactly schemaVersion plus the 250
         // passthrough wire names (camelCase unless a JsonPropertyName
         // overrides it). This proves there is no dead passthrough sitting
         // outside the wire, and no wire member without a passthrough owner.
@@ -85,8 +90,8 @@ public sealed class AppSettingsFacadeNarrowingContractTests
         expected.Add("schemaVersion");
         Assert.True(
             SerializedMemberNames.SetEquals(expected),
-            "Serialized member set must equal schemaVersion + the 243 passthrough wire names.");
-        Assert.Equal(244, SerializedMemberNames.Count);
+            "Serialized member set must equal schemaVersion + the 250 passthrough wire names.");
+        Assert.Equal(251, SerializedMemberNames.Count);
     }
 
     [Fact]
@@ -109,9 +114,10 @@ public sealed class AppSettingsFacadeNarrowingContractTests
     {
         // The single legacy wire-attribute pair (rename + null omission for
         // the migration-era widgetCapsuleModeEnabled key) is a root cause of
-        // why slice-direct serialization cannot be byte-equivalent. It must
+        // Why slice-direct serialization cannot be byte-equivalent. It must
         // stay exactly here, exactly this shape, exactly this count. The
-        // schema-v10 background fields share the WhenWritingNull omission so
+        // schema-v10 background fields and the pomodoro migration-era
+        // single-break key share the WhenWritingNull omission so
         // untouched profiles stay byte-stable, but carry no rename.
         PropertyInfo[] renamed = Passthroughs
             .Where(p => p.GetCustomAttribute<JsonPropertyNameAttribute>() is not null)
@@ -122,7 +128,7 @@ public sealed class AppSettingsFacadeNarrowingContractTests
             .ToArray();
 
         Assert.Single(renamed);
-        Assert.Equal(6, conditionallyIgnored.Length);
+        Assert.Equal(7, conditionallyIgnored.Length);
         Assert.Same(renamed[0], conditionallyIgnored.Single(p => p.Name == nameof(AppSettings.LegacyWidgetCapsuleModeEnabled)));
         Assert.Equal(nameof(AppSettings.LegacyWidgetCapsuleModeEnabled), renamed[0].Name);
         Assert.Equal(
@@ -136,14 +142,15 @@ public sealed class AppSettingsFacadeNarrowingContractTests
                 nameof(AppSettings.WidgetBackgroundUnifiedImage),
                 nameof(AppSettings.WidgetBackgroundPanoramaImage),
                 nameof(AppSettings.WidgetBackgroundDim),
-                nameof(AppSettings.WidgetBackgroundUnifiedFit)
+                nameof(AppSettings.WidgetBackgroundUnifiedFit),
+                nameof(AppSettings.PomodoroBreakMinutes)
             }.Order(),
             conditionallyIgnored.Select(p => p.Name).Order());
     }
 
     private static HashSet<string> SerializeMemberNames()
     {
-        // Legacy prop and the schema-v10 background fields set non-default so
+        // Legacy props and the schema-v10 background fields set non-default so
         // every WhenWritingNull member is emitted too.
         var settings = new AppSettings
         {
@@ -152,7 +159,8 @@ public sealed class AppSettingsFacadeNarrowingContractTests
             WidgetBackgroundUnifiedImage = "background.png",
             WidgetBackgroundPanoramaImage = "panorama.png",
             WidgetBackgroundDim = 42,
-            WidgetBackgroundUnifiedFit = "Contain"
+            WidgetBackgroundUnifiedFit = "Contain",
+            PomodoroBreakMinutes = 5
         };
         using var doc = JsonDocument.Parse(JsonSerializer.Serialize(
             settings, SettingsJsonContext.Default.AppSettings));

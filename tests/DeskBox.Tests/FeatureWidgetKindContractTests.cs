@@ -23,7 +23,8 @@ public sealed class FeatureWidgetKindContractTests
                 WidgetKind.Music,
                 WidgetKind.Weather,
                 WidgetKind.Search,
-                WidgetKind.Glance
+                WidgetKind.Glance,
+                WidgetKind.Pomodoro
             },
             FeatureWidgetSettings.FeatureKinds);
     }

@@ -85,6 +85,11 @@ public sealed partial class SettingsWindow
         {
             searchSection.RefreshFromSettings();
         }
+        if (_settingsSectionElements.TryGetValue("PomodoroSettings", out FrameworkElement? pomodoro) &&
+            pomodoro is DeskBox.Views.SettingsSections.PomodoroSettingsSection pomodoroSection)
+        {
+            pomodoroSection.RefreshFromSettings();
+        }
         RefreshManagedStoragePathWarning();
         RefreshManagedStorageDesktopShortcutState();
         // RefreshAll re-applied the static DescriptionKey text, dropping the
