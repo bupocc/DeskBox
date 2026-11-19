@@ -1,12 +1,12 @@
-; DeskBox ARM64 安装脚本
+﻿; DeskBox ARM64 安装脚本
 ; 零售安装包由 scripts\build-stage-7c1-distribution.ps1 -Platform ARM64 产出（Full Native AOT 载荷）。
 ; 载荷必须由 ..\scripts\publish-aot-retail.ps1 -Platform ARM64 生成，
 ; 以便同时生成 DeskBox.InstallManifest.txt。手动编译示例：
 ; ISCC /DDeskBoxNativeAot=1 /DDeskBoxBundledRuntime=1 /DMyAppReleaseDir=<publish 目录> DeskBox.arm64.iss
 
 #define MyAppName "DeskBox"
-#define MyAppVersion "1.5.9"
-#define MyAppVersionInfo "1.5.9.0"
+#define MyAppVersion "1.5.9.1"
+#define MyAppVersionInfo "1.5.9.1"
 #define MyAppPublisher "朱天雨"
 #define MyAppExeName "DeskBox.exe"
 #define MyAppOutputBaseName "DeskBox_Setup"
