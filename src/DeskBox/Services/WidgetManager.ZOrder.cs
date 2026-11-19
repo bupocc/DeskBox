@@ -283,6 +283,23 @@ public sealed partial class WidgetManager
             windowHandle);
         _idlePeerOrderGeneration++;
 
+        IDesktopWidgetWindow? leaseOwner = GetLoadedDesktopWindows()
+            .FirstOrDefault(window => window.WindowHandle == windowHandle);
+        if (leaseOwner is not null && IsPinnedByUser(leaseOwner))
+        {
+            // A user-pinned owner rests in the topmost band, which this desktop
+            // band ordering does not govern. The ordering's desktop-layer
+            // fallback attaches the window to the Explorer icon layer, and that
+            // attach path clears WS_EX_TOPMOST — expanding a capsule would drop
+            // the pin. Re-assert the pin and leave the band untouched.
+            Win32Helper.SetWindowTopMost(windowHandle, showWindow: false);
+            App.LogVerbose(
+                $"[ZOrder] Expanded lease acquired (pinned) reason={reason} " +
+                $"generation={_expandedWidgetLayerLease.Generation} " +
+                $"owner=0x{windowHandle.ToInt64():X} peerOrderSkipped=True");
+            return _expandedWidgetLayerLease.Generation;
+        }
+
         List<IntPtr> peerOrder = [windowHandle];
         peerOrder.AddRange(
             GetWindowsInIdleHighestFirstOrder(
@@ -1230,57 +1247,6 @@ public sealed partial class WidgetManager
             $"applied={applied} " +
             $"handles={string.Join(',', windows.Select(window => $"0x{window.WindowHandle.ToInt64():X}"))}");
     }
-
-    public void ActivateAllVisibleWidgetsFromTitle(IntPtr activeHwnd)
-    {
-        if (WidgetLayerService.UsesDesktopPinnedMode())
-        {
-            return;
-        }
-
-        List<IDesktopWidgetWindow> visibleWindows =
-            GetLoadedDesktopWindows().Where(window => window.Visible).ToList();
-        if (visibleWindows.Count == 0)
-        {
-            return;
-        }
-
-        // Rapid title interaction (press-release-press, or a flyout bouncing
-        // focus back to the title bar) used to replay a full group raise for
-        // every press even while the previous raise was still live. Reuse the
-        // live raise within the suppress window instead of re-issuing the
-        // Z-order transactions (#375).
-        DateTime nowUtc = DateTime.UtcNow;
-        if (TitleActivationRaisePolicy.ShouldSkipRepeatRaise(
-                _temporaryRaiseLease.IsActive,
-                _lastTitleActivationRaiseWindowHandle == activeHwnd,
-                nowUtc - _lastTitleActivationRaiseUtc))
-        {
-            _lastTitleActivationRaiseUtc = nowUtc;
-            App.LogVerbose(
-                $"[ZOrder] TitleActivatedAll reuses live raise " +
-                $"active=0x{activeHwnd.ToInt64():X}");
-            return;
-        }
-
-        var handles = GetWindowsInIdleHighestFirstOrder(visibleWindows)
-            .Select(window => window.WindowHandle)
-            .ToList();
-        _lastTitleActivationRaiseWindowHandle = activeHwnd;
-        _lastTitleActivationRaiseUtc = nowUtc;
-        long generation = TrackTemporarilyRaisedWidgets(
-            handles,
-            "title-activated-all");
-        WidgetLayerService.BringGroupTemporarilyToFront(handles, activeHwnd);
-        QueueTemporaryRaisedWidgetRestore(
-            "title-activated-all-fallback",
-            generation,
-            TimeSpan.FromMilliseconds(2300));
-        App.LogVerbose($"[ZOrder] TitleActivatedAll active=0x{activeHwnd.ToInt64():X}");
-    }
-
-    private IntPtr _lastTitleActivationRaiseWindowHandle;
-    private DateTime _lastTitleActivationRaiseUtc = DateTime.MinValue;
 
     /// <summary>
     /// Keeps a tray-raised widget group contiguous after one DeskBox window

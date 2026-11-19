@@ -4766,8 +4766,16 @@ public sealed partial class WidgetShell : UserControl
 
     private void ApplyCompactActionVisibility(bool animate = true)
     {
+        // While the pointer is anywhere inside the capsule the buttons stay put:
+        // the child enter/exit pairs of the trigger and host are not reliable
+        // once the host stops being hit-testable (the pointer is already inside
+        // the element when it becomes visible again, so no new PointerEntered
+        // arrives and the buttons never come back). Shell-level enter/exit is
+        // the boundary that matches what the user perceives.
         bool visible = _isCollapsed &&
-            (IsPointerOverCompactActionRegion() || _isCompactKeyboardFocused);
+            (_isPointerOverShell ||
+                IsPointerOverCompactActionRegion() ||
+                _isCompactKeyboardFocused);
         CompactActionHost.IsHitTestVisible = visible;
         if (animate &&
             SystemAnimationsEnabled() &&

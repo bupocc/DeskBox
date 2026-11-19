@@ -178,44 +178,10 @@ public sealed partial class ContentWidgetWindow
             return;
         }
 
-        if (ShouldOpenTitleBarFlyout(e.OriginalSource) &&
-            !Win32Helper.IsKeyPressed(Windows.System.VirtualKey.Control))
-        {
-            // Raising the whole group (band ordering + foreground) is window
-            // surgery and must not run on the pointer-pressed callback frame
-            // (drag-freeze family). The deferral sits at this call site only:
-            // the manager's raise sequence itself stays atomic so the reassert
-            // path never splits across turns. The foreground snapshot guard
-            // drops the raise if the user moved focus elsewhere during the
-            // deferred turn; the drag guard skips it when the press turned
-            // into a drag before the unit landed.
-            IntPtr foregroundAtEnqueue = Win32Helper.GetForegroundWindow();
-            IntPtr windowHandle = HWnd;
-            UiDispatch.PostAfterCallback(() =>
-            {
-                // The drag guard gates on real movement: IsDragging is set
-                // synchronously by BeginWindowDragCore later in THIS press
-                // dispatch, so a bare check would drop the raise forever.
-                if (!Win32Helper.IsWindowInCurrentProcess(windowHandle) ||
-                    (IsDragging && HasMovedTitleBarDrag))
-                {
-                    return;
-                }
-
-                IntPtr foregroundNow = Win32Helper.GetForegroundWindow();
-                if (foregroundNow != windowHandle &&
-                    foregroundNow != foregroundAtEnqueue)
-                {
-                    App.LogVerbose(
-                        "[ZOrder] Deferred title-bar group raise dropped: " +
-                        "foreground moved on");
-                    return;
-                }
-
-                App.Current.WidgetManager?.ActivateAllVisibleWidgetsFromTitle(
-                    windowHandle);
-            });
-        }
+        // A title-bar press deliberately raises only this widget (its own
+        // activation pulse). The previous behavior lifted the whole widget
+        // group above every application, which read as "picking one grid pulls
+        // all of them in front of my work".
         if (_config.IsPositionLocked || IsCompactTransitionActive) return;
         BeginWindowDragCore(e, ContentWidgetShell.TitleBar);
     }

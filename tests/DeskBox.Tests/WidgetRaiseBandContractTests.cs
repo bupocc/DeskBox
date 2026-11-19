@@ -36,24 +36,21 @@ public sealed class WidgetRaiseBandContractTests
     }
 
     [Fact]
-    public void TitleActivation_ReusesLiveRaiseWithinSuppressWindow()
+    public void TitleBarPress_RaisesOnlyThePressedWidget()
     {
-        string manager = File.ReadAllText(TestPaths.FromRepository(
-            "src/DeskBox/Services/WidgetManager.ZOrder.cs"));
-        string activation = SliceMethod(
-            manager,
-            "public void ActivateAllVisibleWidgetsFromTitle",
-            "private void TryRestoreRaisedWidgetsAfterInteraction");
+        string window = File.ReadAllText(TestPaths.FromRepository(
+            "src/DeskBox/Views/ContentWidgetWindow.WindowInteraction.cs"));
 
-        Assert.Contains(
-            "TitleActivationRaisePolicy.ShouldSkipRepeatRaise",
-            activation,
+        // Pressing a grid's title bar used to batch-raise every visible widget
+        // above the applications behind them. Picking one grid must never move
+        // the others, so the group raise stays out of the press path.
+        Assert.DoesNotContain(
+            "ActivateAllVisibleWidgetsFromTitle",
+            window,
             StringComparison.Ordinal);
-        // Trigger timing itself is unchanged: the raise still fires on every
-        // title press that is not covered by the suppress window.
         Assert.Contains(
-            "BringGroupTemporarilyToFront(handles, activeHwnd)",
-            activation,
+            "BeginWindowDragCore(e, ContentWidgetShell.TitleBar)",
+            window,
             StringComparison.Ordinal);
     }
 
