@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Collections.ObjectModel;
 using System.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -43,7 +43,7 @@ public partial class SettingsViewModel : ObservableObject, IDisposable
     private const string AnimationPresetStandard = "Standard";
     private const string AnimationPresetEmphasized = "Emphasized";
     private const string AnimationPresetCustom = "Custom";
-    private const string RepositoryUrl = "https://github.com/Tianyu199509/DeskBox";
+    private const string RepositoryUrl = "https://github.com/" + AppUpdateService.GitHubRepositorySlug;
     private const string OfficialWebsiteUrl = "https://deskbox.fun";
     private const string MicrosoftStoreProductId = "9PBZSNB4D69H";
     private const string MicrosoftStoreCampaignId = "deskbox_about_support";

@@ -574,7 +574,7 @@
                     <StackPanel x:Name="Step5Panel" Spacing="14" Visibility="Collapsed">
                         <TextBlock Style="{StaticResource StepTitleText}" svc:Localized.Key="Onboarding.Step5.Title"/>
                         <TextBlock Style="{StaticResource StepBodyText}" svc:Localized.Key="Onboarding.Step5.Body"/>
-                        <Grid x:Name="Step5FeatureGrid" ColumnSpacing="9" RowSpacing="9" ColumnDefinitions="*,*" RowDefinitions="Auto,Auto,Auto">
+                        <Grid x:Name="Step5FeatureGrid" ColumnSpacing="9" RowSpacing="9" ColumnDefinitions="*,*" RowDefinitions="Auto,Auto,Auto,Auto">
                             <Border x:Name="Step5TodoCard" Style="{StaticResource FeatureChoiceCard}">
                                 <Grid RowDefinitions="Auto,Auto">
                                     <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
@@ -645,6 +645,18 @@
                                         <ToggleSwitch svc:Localized.AutomationNameKey="Glance.Title" x:Name="Step5GlanceToggle" Grid.Column="1" MinWidth="0" HorizontalAlignment="Right" VerticalAlignment="Center" OnContent="" OffContent="" Tag="Glance" Toggled="Step5FeatureToggle_Toggled"/>
                                     </Grid>
                                     <TextBlock Grid.Row="1" Margin="0,5,0,0" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" svc:Localized.Key="WidgetContent.Glance.StatusDescription"/>
+                                </Grid>
+                            </Border>
+                            <Border x:Name="Step5PomodoroCard" Grid.Row="3" Grid.ColumnSpan="2" Style="{StaticResource FeatureChoiceCard}">
+                                <Grid RowDefinitions="Auto,Auto">
+                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                                        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                            <controls:WidgetTitleIcon IconKind="Pomodoro" Mode="Color" IconSize="15"/>
+                                            <TextBlock VerticalAlignment="Center" FontSize="12.5" FontWeight="SemiBold" svc:Localized.Key="Pomodoro.Title"/>
+                                        </StackPanel>
+                                        <ToggleSwitch svc:Localized.AutomationNameKey="Pomodoro.Title" x:Name="Step5PomodoroToggle" Grid.Column="1" MinWidth="0" HorizontalAlignment="Right" VerticalAlignment="Center" OnContent="" OffContent="" Tag="Pomodoro" Toggled="Step5FeatureToggle_Toggled"/>
+                                    </Grid>
+                                    <TextBlock Grid.Row="1" Margin="0,5,0,0" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" svc:Localized.Key="WidgetContent.Pomodoro.StatusDescription"/>
                                 </Grid>
                             </Border>
                         </Grid>

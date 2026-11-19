@@ -174,6 +174,7 @@ public sealed partial class OnboardingWindow
         Step5WeatherToggle.IsEnabled = enabled;
         Step5MusicToggle.IsEnabled = enabled;
         Step5GlanceToggle.IsEnabled = enabled;
+        Step5PomodoroToggle.IsEnabled = enabled;
     }
 
     private void Step5FeatureToggle_Toggled(object sender, RoutedEventArgs e)
@@ -259,6 +260,9 @@ public sealed partial class OnboardingWindow
             Step5GlanceToggle.IsOn = FeatureWidgetSettings.IsEnabled(
                 _settingsService.Settings,
                 WidgetKind.Glance);
+            Step5PomodoroToggle.IsOn = FeatureWidgetSettings.IsEnabled(
+                _settingsService.Settings,
+                WidgetKind.Pomodoro);
             _hasInitializedFeatureToggles = true;
         }
         finally

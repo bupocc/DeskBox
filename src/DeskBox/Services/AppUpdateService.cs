@@ -12,12 +12,18 @@ namespace DeskBox.Services;
 
 public sealed partial class AppUpdateService : IAppUpdateService
 {
-    public const string DefaultManifestUrl = "https://deskbox.fun/update/stable.json";
-    public const string DefaultGitHubLatestReleaseApiUrl = "https://api.github.com/repos/Tianyu199509/DeskBox/releases/latest";
-    public const string DefaultManualDownloadUrl = "https://deskbox.fun/download";
+    // This distribution ships from its own GitHub repository: the fork carries
+    // widgets the upstream vendor does not, so an upstream installer would
+    // silently downgrade the install. The release feed is therefore the fork's
+    // "latest release" endpoint, and no other repository or vendor manifest is
+    // consulted by default (the manifest channel stays available to callers
+    // that pass an explicit URL, which is how the tests pin the parsing rules).
+    public const string GitHubRepositorySlug = "bupocc/DeskBox";
+    public const string DefaultGitHubLatestReleaseApiUrl = "https://api.github.com/repos/" + GitHubRepositorySlug + "/releases/latest";
+    public const string DefaultManualDownloadUrl = "https://github.com/" + GitHubRepositorySlug + "/releases/latest";
 
     private readonly HttpClient _httpClient;
-    private readonly string _manifestUrl;
+    private readonly string? _manifestUrl;
     private readonly string _githubLatestReleaseApiUrl;
     private readonly string _updateRootPath;
 
@@ -47,8 +53,10 @@ public sealed partial class AppUpdateService : IAppUpdateService
         _httpClient.DefaultRequestHeaders.UserAgent.Clear();
         _httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("DeskBox", GetCurrentAppVersion()));
 
+        // No manifest URL means the JSON feed channel is disabled: the GitHub
+        // release endpoint is the only update source for this distribution.
         _manifestUrl = string.IsNullOrWhiteSpace(manifestUrl)
-            ? DefaultManifestUrl
+            ? null
             : manifestUrl;
         _githubLatestReleaseApiUrl = string.IsNullOrWhiteSpace(githubLatestReleaseApiUrl)
             ? DefaultGitHubLatestReleaseApiUrl
@@ -179,7 +187,7 @@ public sealed partial class AppUpdateService : IAppUpdateService
         }
     }
 
-    public string ManifestUrl => _manifestUrl;
+    public string ManifestUrl => _manifestUrl ?? string.Empty;
     public AppUpdateDeliveryKind DeliveryKind => AppUpdateDeliveryKind.DirectInstaller;
     internal static string CurrentInstallerArchitectureSuffix =>
         GetInstallerArchitectureSuffix(RuntimeInformation.ProcessArchitecture);
@@ -191,19 +199,29 @@ public sealed partial class AppUpdateService : IAppUpdateService
 
     public async Task<AppUpdateCheckResult> CheckForUpdatesAsync(string currentVersion, CancellationToken cancellationToken = default)
     {
-        var manifestResult = await CheckManifestForUpdatesAsync(currentVersion, cancellationToken);
-        if (manifestResult.Status is AppUpdateCheckStatus.UpdateAvailable or AppUpdateCheckStatus.UpToDate)
-        {
-            return SetLastCheckResult(manifestResult);
-        }
-
+        // GitHub first: this build's releases live there, and a vendor-manifest
+        // answer must never win over the fork's own (the vendor channel would
+        // offer installers that drop the fork-only widgets). The manifest feed
+        // is a fallback for callers that explicitly configure one, and is
+        // skipped entirely when it is disabled.
         var githubResult = await CheckGitHubLatestReleaseForUpdatesAsync(currentVersion, cancellationToken);
         if (githubResult.Status is AppUpdateCheckStatus.UpdateAvailable or AppUpdateCheckStatus.UpToDate)
         {
             return SetLastCheckResult(githubResult);
         }
 
-        return SetLastCheckResult(manifestResult);
+        if (_manifestUrl is null)
+        {
+            return SetLastCheckResult(githubResult);
+        }
+
+        var manifestResult = await CheckManifestForUpdatesAsync(currentVersion, cancellationToken);
+        if (manifestResult.Status is AppUpdateCheckStatus.UpdateAvailable or AppUpdateCheckStatus.UpToDate)
+        {
+            return SetLastCheckResult(manifestResult);
+        }
+
+        return SetLastCheckResult(githubResult);
     }
 
     private async Task<AppUpdateCheckResult> CheckManifestForUpdatesAsync(string currentVersion, CancellationToken cancellationToken)
@@ -246,13 +264,9 @@ public sealed partial class AppUpdateService : IAppUpdateService
     {
         try
         {
-            using var response = await _httpClient.GetAsync(_githubLatestReleaseApiUrl, cancellationToken);
-            response.EnsureSuccessStatusCode();
-
-            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            var release = await JsonSerializer.DeserializeAsync(
-                stream,
-                AppUpdateJsonContext.Default.GitHubRelease,
+            var release = await FetchLatestGitHubReleaseAsync(
+                _httpClient,
+                _githubLatestReleaseApiUrl,
                 cancellationToken);
             var manifest = await CreateManifestFromGitHubReleaseAsync(release, cancellationToken);
             if (!IsManifestUsable(manifest) || string.IsNullOrWhiteSpace(manifest!.Sha256))
@@ -696,20 +710,58 @@ public sealed partial class AppUpdateService : IAppUpdateService
     }
 
     /// <summary>
-    /// Fetches the published manifest purely for display surfaces (release
-    /// notes, update summary). Unlike <see cref="IsManifestUsable"/>, this
-    /// validation only requires the content fields: the installer-pinning
-    /// rules exist to protect the download/install path and must not gate
-    /// plain text display — that gate is what left Store builds (whose
-    /// synthesized manifest carries a ms-windowsstore:// download target)
-    /// with an eternally empty release-notes window.
+    /// Fetches the latest release's notes purely for display surfaces (release
+    /// notes, update summary), from the distribution's own GitHub releases.
+    /// Unlike <see cref="IsManifestUsable"/>, this validation only requires the
+    /// content fields: the installer-pinning rules exist to protect the
+    /// download/install path and must not gate plain text display — that gate
+    /// is what left Store builds (whose synthesized manifest carries a
+    /// ms-windowsstore:// download target) with an eternally empty
+    /// release-notes window.
     /// </summary>
+    private static async Task<GitHubReleaseResponse?> FetchLatestGitHubReleaseAsync(
+        HttpClient httpClient,
+        string apiUrl,
+        CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.GetAsync(apiUrl, cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        return await JsonSerializer.DeserializeAsync(
+            stream,
+            AppUpdateJsonContext.Default.GitHubRelease,
+            cancellationToken);
+    }
+
     public static async Task<AppUpdateManifest?> FetchContentManifestAsync(
         CancellationToken cancellationToken = default)
     {
         try
         {
-            return await FetchContentManifestAsync(DefaultManifestUrl, s_contentHttpClient, cancellationToken);
+            var release = await FetchLatestGitHubReleaseAsync(
+                s_contentHttpClient,
+                DefaultGitHubLatestReleaseApiUrl,
+                cancellationToken);
+            if (release is null || string.IsNullOrWhiteSpace(release.TagName))
+            {
+                return null;
+            }
+
+            var manifest = new AppUpdateManifest
+            {
+                SchemaVersion = 1,
+                Channel = "stable",
+                Version = NormalizeVersionText(release.TagName),
+                ReleaseNotesUrl = release.HtmlUrl,
+                ReleaseNotes = string.IsNullOrWhiteSpace(release.Body)
+                    ? []
+                    : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["en-US"] = release.Body
+                    },
+            };
+            return IsContentManifestUsable(manifest) ? manifest : null;
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException or IOException)
         {
@@ -756,15 +808,16 @@ public sealed partial class AppUpdateService : IAppUpdateService
         {
             Channel = "direct",
             Version = version.Trim(),
-            ReleaseNotesUrl = $"https://github.com/Tianyu199509/DeskBox/releases/tag/v{version.Trim()}",
+            ReleaseNotesUrl = $"https://github.com/{GitHubRepositorySlug}/releases/tag/v{version.Trim()}",
         };
     }
 
     /// <summary>
-    /// The installer may only come from DeskBox's own distribution hosts over
-    /// HTTPS. The manifest hash proves integrity but not authenticity: a
-    /// compromised feed can serve a malicious installer together with its own
-    /// correct hash, so the origin itself has to be pinned.
+    /// The installer may only come from this distribution's own GitHub
+    /// releases over HTTPS. The manifest hash proves integrity but not
+    /// authenticity: a compromised feed can serve a malicious installer
+    /// together with its own correct hash, so the origin itself has to be
+    /// pinned.
     /// </summary>
     private static bool IsTrustedInstallerDownloadUri(Uri uri)
     {
@@ -773,27 +826,16 @@ public sealed partial class AppUpdateService : IAppUpdateService
             return false;
         }
 
-        if (IsHostOrSubdomain(uri, "deskbox.fun"))
-        {
-            return true;
-        }
-
         // GitHub hosts third-party repositories, so trusting the whole domain
         // would let a tampered manifest point at any attacker repository with
-        // a matching hash. Only this project's own release downloads count;
-        // the actual asset bytes arrive via redirect from
+        // a matching hash. Only this distribution's own release downloads
+        // count; the actual asset bytes arrive via redirect from
         // objects.githubusercontent.com, which the HTTP client follows and
         // which therefore must never be trusted as a manifest origin itself.
         return string.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase) &&
             uri.AbsolutePath.StartsWith(
-                "/Tianyu199509/DeskBox/releases/download/",
+                $"/{GitHubRepositorySlug}/releases/download/",
                 StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool IsHostOrSubdomain(Uri uri, string domain)
-    {
-        return uri.Host.Equals(domain, StringComparison.OrdinalIgnoreCase) ||
-            uri.Host.EndsWith("." + domain, StringComparison.OrdinalIgnoreCase);
     }
 
     internal static bool TrySelectInstallerForArchitecture(
