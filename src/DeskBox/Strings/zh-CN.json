@@ -3024,5 +3024,6 @@
   "Widget.Settings.Pomodoro": "番茄钟设置",
   "WidgetContent.Pomodoro.StatusDescription": "带短休息与长休息阶段的专注计时器",
   "WidgetContent.Pomodoro.StatusLabel": "已实现",
-  "WidgetTitleIcon.Label.Pomodoro": "番茄钟"
+  "WidgetTitleIcon.Label.Pomodoro": "番茄钟",
+  "Pomodoro.Compact.Completed": "完成"
 }

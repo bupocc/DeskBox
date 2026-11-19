@@ -3024,5 +3024,6 @@
   "Widget.Settings.Pomodoro": "पोमोडोरो सेटिंग्स",
   "WidgetContent.Pomodoro.StatusDescription": "छोटे और लंबे विरामों वाला फ़ोकस टाइमर",
   "WidgetContent.Pomodoro.StatusLabel": "क्रियान्वित किया गया",
-  "WidgetTitleIcon.Label.Pomodoro": "पोमोडोरो"
+  "WidgetTitleIcon.Label.Pomodoro": "पोमोडोरो",
+  "Pomodoro.Compact.Completed": "पूर्ण"
 }

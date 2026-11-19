@@ -3024,5 +3024,6 @@
   "Widget.Settings.Pomodoro": "إعدادات بومودورو",
   "WidgetContent.Pomodoro.StatusDescription": "مؤقت تركيز مع استراحات قصيرة وطويلة",
   "WidgetContent.Pomodoro.StatusLabel": "تم التنفيذ",
-  "WidgetTitleIcon.Label.Pomodoro": "بومودورو"
+  "WidgetTitleIcon.Label.Pomodoro": "بومودورو",
+  "Pomodoro.Compact.Completed": "تم"
 }

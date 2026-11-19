@@ -3024,5 +3024,6 @@
   "Widget.Settings.Pomodoro": "ポモドーロの設定",
   "WidgetContent.Pomodoro.StatusDescription": "短い休憩と長い休憩を組み合わせた集中タイマー",
   "WidgetContent.Pomodoro.StatusLabel": "実装済み",
-  "WidgetTitleIcon.Label.Pomodoro": "ポモドーロ"
+  "WidgetTitleIcon.Label.Pomodoro": "ポモドーロ",
+  "Pomodoro.Compact.Completed": "完了"
 }

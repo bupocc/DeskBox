@@ -2386,6 +2386,51 @@ public sealed partial class WidgetShell : UserControl
             return;
         }
 
+        // Timer-driven content (pomodoro) rewrites its title once per second. The
+        // regular path below re-queues the marquee, re-runs the adaptive layout,
+        // and plays the live-change pulse for every text change, which is visible
+        // as the capsule jumping on each tick. Apply the ticking fields in place
+        // instead, and leave the layout and animations untouched.
+        if (previous is not null &&
+            presentation.IsLiveTextUpdate &&
+            previous.IsLiveTextUpdate)
+        {
+            WidgetCompactPresentation comparable = previous with
+            {
+                Title = presentation.Title,
+                Summary = presentation.Summary,
+                Progress = presentation.Progress,
+                IsProgressIndeterminate = presentation.IsProgressIndeterminate,
+                PrimaryActionGlyph = presentation.PrimaryActionGlyph,
+                PrimaryActionLabel = presentation.PrimaryActionLabel,
+                IsPlaying = presentation.IsPlaying,
+                LiveStateKey = presentation.LiveStateKey
+            };
+
+            if (comparable == presentation)
+            {
+                bool liveTextChanged =
+                    !string.Equals(previous.Title, presentation.Title, StringComparison.Ordinal) ||
+                    !string.Equals(previous.Summary, presentation.Summary, StringComparison.Ordinal);
+
+                _compactPresentation = presentation;
+
+                if (liveTextChanged)
+                {
+                    CompactTitleText.Text = presentation.Title;
+                    CompactTitleMarqueeClone.Text = presentation.Title;
+                    CompactSummaryText.Text = presentation.Summary;
+                    CompactSummaryMarqueeClone.Text = presentation.Summary;
+                    CompactTitleIcon.LabelText = presentation.Title;
+                }
+
+                CompactPrimaryActionIcon.Glyph = presentation.PrimaryActionGlyph;
+                ApplyCompactLiveState();
+                ApplyCompactMusicProgress();
+                return;
+            }
+        }
+
         if (previous is not null)
         {
             WidgetCompactPresentation previousWithCurrentProgress = previous with
@@ -2549,7 +2594,7 @@ public sealed partial class WidgetShell : UserControl
         CompactPlayPauseIcon.Kind = presentation.IsPlaying
             ? MusicTransportIconKind.Pause
             : MusicTransportIconKind.Play;
-        ApplyCompactActionLabels(presentation.IsPlaying);
+        ApplyCompactActionLabels(presentation);
         UpdateCompactVinylRotation(showVinyl && presentation.IsPlaying);
         ApplyCompactForegroundTheme(presentation);
 
@@ -2843,10 +2888,15 @@ public sealed partial class WidgetShell : UserControl
         textBlock.TextTrimming = TextTrimming.CharacterEllipsis;
     }
 
-    private void ApplyCompactActionLabels(bool isPlaying)
+    private void ApplyCompactActionLabels(WidgetCompactPresentation presentation)
     {
         var localization = App.Current.LocalizationService;
-        SetAccessibleLabel(CompactPrimaryActionButton, localization.T("Todo.Menu.MarkCompleted"));
+        bool isPlaying = presentation.IsPlaying;
+        SetAccessibleLabel(
+            CompactPrimaryActionButton,
+            string.IsNullOrWhiteSpace(presentation.PrimaryActionLabel)
+                ? localization.T("Todo.Menu.MarkCompleted")
+                : presentation.PrimaryActionLabel);
         SetAccessibleLabel(CompactPreviousButton, localization.T("Music.Control.Previous"));
         SetAccessibleLabel(
             CompactPlayPauseButton,

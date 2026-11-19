@@ -3024,5 +3024,6 @@
   "Widget.Settings.Pomodoro": "Pomodoro-Einstellungen",
   "WidgetContent.Pomodoro.StatusDescription": "Fokustimer mit kurzen und langen Pausen",
   "WidgetContent.Pomodoro.StatusLabel": "Implementiert",
-  "WidgetTitleIcon.Label.Pomodoro": "Pomodoro"
+  "WidgetTitleIcon.Label.Pomodoro": "Pomodoro",
+  "Pomodoro.Compact.Completed": "Fertig"
 }

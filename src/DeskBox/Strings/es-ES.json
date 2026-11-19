@@ -3024,5 +3024,6 @@
   "Widget.Settings.Pomodoro": "Configuración de Pomodoro",
   "WidgetContent.Pomodoro.StatusDescription": "Temporizador de concentración con descansos cortos y largos",
   "WidgetContent.Pomodoro.StatusLabel": "Implementado",
-  "WidgetTitleIcon.Label.Pomodoro": "Pomodoro"
+  "WidgetTitleIcon.Label.Pomodoro": "Pomodoro",
+  "Pomodoro.Compact.Completed": "Hecho"
 }

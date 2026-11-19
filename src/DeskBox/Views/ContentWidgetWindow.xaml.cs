@@ -1,4 +1,4 @@
-﻿using DeskBox.Contracts;
+using DeskBox.Contracts;
 using DeskBox.Controls;
 using DeskBox.Controls.WidgetContents;
 using DeskBox.Helpers;
@@ -297,13 +297,16 @@ public sealed partial class ContentWidgetWindow : WidgetWindowBase, IDesktopWidg
         string contentMode)
     {
         PomodoroWidgetViewModel viewModel = pomodoro.ViewModel;
-        bool minimal = contentMode == SettingsService.WidgetCompactContentModeMinimal;
+        bool showSummary = contentMode != SettingsService.WidgetCompactContentModeMinimal;
+        bool completed = viewModel.IsCompletionAlertActive;
+        Windows.UI.Color accent = GetPomodoroPhaseAccent(viewModel.Phase);
+
         string title = string.IsNullOrWhiteSpace(viewModel.CountdownText)
             ? _titleViewModel.DisplayName
             : viewModel.CountdownText;
 
         var summaryParts = new List<string>(2);
-        if (!minimal)
+        if (showSummary)
         {
             if (!string.IsNullOrWhiteSpace(viewModel.PhaseText))
             {
@@ -322,18 +325,57 @@ public sealed partial class ContentWidgetWindow : WidgetWindowBase, IDesktopWidg
             _descriptor.DefaultGlyph,
             string.Empty,
             ShowPrimaryAction: true,
-            PrimaryActionGlyph: viewModel.IsRunning ? "\uE769" : "\uE102",
-            UseStackedText: !minimal,
-            EnableMarquee: true,
-            IsAttention: viewModel.IsCompletionAlertActive,
+            PrimaryActionGlyph: viewModel.PrimaryActionGlyph,
+            PrimaryActionLabel: viewModel.PrimaryActionText,
+            IsPlaying: viewModel.IsRunning,
+            UseStackedText: showSummary,
+            // The countdown rewrites itself every second. A marquee would restart
+            // its scroll on each tick, which is exactly the jump we are avoiding.
+            EnableMarquee: false,
+            Progress: viewModel.Progress,
+            IsAttention: completed,
             LiveStateKey: string.Join(
                 "|",
-                viewModel.CountdownText,
+                viewModel.Phase,
+                viewModel.RoundNumber,
+                viewModel.RoundCount,
                 viewModel.PhaseText,
                 viewModel.RoundSummaryText,
-                viewModel.IsRunning ? "1" : "0",
-                viewModel.IsCompletionAlertActive ? "1" : "0"));
+                viewModel.PrimaryActionGlyph,
+                completed ? "1" : "0"),
+            BadgeText: showSummary
+                ? completed
+                    ? App.Current.LocalizationService.T("Pomodoro.Compact.Completed")
+                    : $"{viewModel.RoundNumber}/{viewModel.RoundCount}"
+                : string.Empty,
+            BadgeIsWarning: completed,
+            BackgroundColorStart: Windows.UI.Color.FromArgb(
+                34,
+                accent.R,
+                accent.G,
+                accent.B),
+            BackgroundColorEnd: Windows.UI.Color.FromArgb(
+                8,
+                accent.R,
+                accent.G,
+                accent.B),
+            EdgeGlowColor: accent,
+            IconColor: accent,
+            // Ticking fields are applied in place by WidgetShell so the capsule
+            // does not re-layout or pulse once per second.
+            IsLiveTextUpdate: true);
     }
+
+    private static Windows.UI.Color GetPomodoroPhaseAccent(PomodoroTimerPhase phase) => phase switch
+    {
+        PomodoroTimerPhase.Focus =>
+            Windows.UI.Color.FromArgb(255, 244, 123, 103),
+        PomodoroTimerPhase.ShortBreak =>
+            Windows.UI.Color.FromArgb(255, 112, 174, 139),
+        PomodoroTimerPhase.LongBreak =>
+            Windows.UI.Color.FromArgb(255, 87, 150, 166),
+        _ => Windows.UI.Color.FromArgb(255, 244, 123, 103)
+    };
 
     private WidgetCompactPresentation CreateMusicCompactPresentation(
         MusicWidgetContentAdapter music,

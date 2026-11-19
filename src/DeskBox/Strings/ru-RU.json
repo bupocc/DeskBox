@@ -3024,5 +3024,6 @@
   "Widget.Settings.Pomodoro": "Настройки Помодоро",
   "WidgetContent.Pomodoro.StatusDescription": "Таймер фокусировки с короткими и длинными перерывами",
   "WidgetContent.Pomodoro.StatusLabel": "Реализовано",
-  "WidgetTitleIcon.Label.Pomodoro": "Помодоро"
+  "WidgetTitleIcon.Label.Pomodoro": "Помодоро",
+  "Pomodoro.Compact.Completed": "Готово"
 }

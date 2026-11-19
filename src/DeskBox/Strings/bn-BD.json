@@ -3024,5 +3024,6 @@
   "Widget.Settings.Pomodoro": "পোমোডোরো সেটিংস",
   "WidgetContent.Pomodoro.StatusDescription": "স্বল্প ও দীর্ঘ বিরতিসহ মনোযোগের টাইমার",
   "WidgetContent.Pomodoro.StatusLabel": "বাস্তবায়িত",
-  "WidgetTitleIcon.Label.Pomodoro": "পোমোডোরো"
+  "WidgetTitleIcon.Label.Pomodoro": "পোমোডোরো",
+  "Pomodoro.Compact.Completed": "সম্পন্ন"
 }

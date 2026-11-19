@@ -60,4 +60,14 @@ public sealed record WidgetCompactPresentation(
     // and compact transition animations remain on independent layers.
     double FullBleedBackgroundOpacity = 1.0,
     // Bundled vector icon shown in place of the default glyph (weather).
-    ImageSource? IconImage = null);
+    ImageSource? IconImage = null,
+    // Accessible name for the compact primary action button. Widgets that own a
+    // meaningful label (pomodoro start/pause) set it; everything else falls back
+    // to the shared "mark completed" copy.
+    string? PrimaryActionLabel = null,
+    // Content whose own text changes on a timer (pomodoro countdown). Such a
+    // presentation may update Title/Summary/Progress/action glyph/play state
+    // between frames, but the shell must apply those diffs in place: rebuilding
+    // the marquee, adaptive layout, and live-change pulse on every tick reads as
+    // the capsule jumping once per second.
+    bool IsLiveTextUpdate = false);

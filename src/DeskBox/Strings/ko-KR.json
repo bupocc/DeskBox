@@ -3024,5 +3024,6 @@
   "Widget.Settings.Pomodoro": "뿌모도로 설정",
   "WidgetContent.Pomodoro.StatusDescription": "짧은 휴식과 긴 휴식이 있는 집중 타이머",
   "WidgetContent.Pomodoro.StatusLabel": "구현됨",
-  "WidgetTitleIcon.Label.Pomodoro": "뿌모도로"
+  "WidgetTitleIcon.Label.Pomodoro": "뿌모도로",
+  "Pomodoro.Compact.Completed": "완료"
 }
