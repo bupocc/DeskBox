@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "channel": "stable",
+  "version": "1.5.9.3",
+  "releaseDate": "2026-11-19",
+  "minimumSupportedVersion": "",
+  "mandatory": false,
+  "downloadUrl": "https://github.com/bupocc/DeskBox/releases/download/v1.5.9.3/DeskBox_Setup_1.5.9.3_x64.exe",
+  "sha256": "721365FA24EA604330B774A9FBCB1C3C0627D5FCA58C0A6A6DBBE5C9FE6DD9A9",
+  "size": 34351732,
+  "manualDownloadUrl": "https://github.com/bupocc/DeskBox/releases/latest",
+  "mirrorUrl": "",
+  "releaseNotesUrl": "https://github.com/bupocc/DeskBox/releases/tag/v1.5.9.3",
+  "summary": {
+    "zh-CN": "番茄钟格子、引导页卡片、每格子独立置顶，更新通道改为本仓库发布。",
+    "en-US": "Pomodoro widget, onboarding card, per-widget always-on-top, and updates served from this repository."
+  },
+  "releaseNotes": {
+    "zh-CN": "### 应用内更新\n\n- 更新检查与更新内容改为优先读取本仓库里的静态清单，不再依赖 60 次/小时的匿名 GitHub API 额度，共享出口 IP 下也不会再出现「更新失败」；GitHub release 端点保留为兜底。\n\n### 番茄钟\n\n- 专注 / 短休息 / 长休息三阶段，轮次、跳过、重置、暂停都在格子内完成，重启后按截止时间恢复。\n- 折叠成胶囊后：倒计时不再抖动，底部显示阶段色进度条，一轮结束显示「完成」徽标并切到休息配色。\n- 设置页新增番茄钟一节：轮次、三个阶段时长、完成提示音与通知。\n\n### 新手引导\n\n- 第 5 步新增番茄钟卡片，开启后立刻生成格子。\n\n### 每个格子独立置顶\n\n- 右键「置顶显示」：置顶的格子压在普通应用窗口之上，折叠 / 展开、点其它格子、重启都不丢；取消后回桌面层。\n\n### 应用内更新\n\n- 更新检查与安装包下载都指向本仓库的 release，安装包自带运行时，安装时不需要联网。",
+    "en-US": "### In-app updates\n\n- Update checks and release notes now read a static manifest from this repository instead of the anonymous GitHub API, so the 60-requests-per-hour/IP allowance behind a shared NAT no longer turns checks into failures; the GitHub release endpoint remains as a fallback.\n\n### Pomodoro widget\n\n- Focus / short break / long break phases with rounds, skip, reset, and pause inside the widget; the timer state survives restarts via its deadline.\n- Collapsed capsule: no jitter while the countdown ticks, a phase-colored progress line at the bottom, and a \"Done\" badge with break colors when a round ends.\n- New Pomodoro section in settings: rounds, three phase lengths, completion sound and notification.\n\n### Onboarding\n\n- Step 5 gained a Pomodoro card; enabling it creates the widget right away.\n\n### Per-widget always on top\n\n- \"Always on top\" in the context menu keeps a single widget above normal application windows across collapsing, expanding, sibling clicks, and restarts.\n\n### In-app updates\n\n- Update checks and installer downloads now come from this repository's releases; the installer carries its own runtime and needs no network access."
+  }
+}
