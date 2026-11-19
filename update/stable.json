@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
   "channel": "stable",
-  "version": "1.5.9.3",
+  "version": "1.5.9.4",
   "releaseDate": "2026-11-19",
   "minimumSupportedVersion": "",
   "mandatory": false,
-  "downloadUrl": "https://github.com/bupocc/DeskBox/releases/download/v1.5.9.3/DeskBox_Setup_1.5.9.3_x64.exe",
-  "sha256": "721365FA24EA604330B774A9FBCB1C3C0627D5FCA58C0A6A6DBBE5C9FE6DD9A9",
-  "size": 34351732,
+  "downloadUrl": "https://github.com/bupocc/DeskBox/releases/download/v1.5.9.4/DeskBox_Setup_1.5.9.4_x64.exe",
+  "sha256": "CD95DB78D3E3DB124CDF28F6AD0A8185EB5274FE7098045B5ECF7B6AEAEA513B",
+  "size": 34359838,
   "manualDownloadUrl": "https://github.com/bupocc/DeskBox/releases/latest",
   "mirrorUrl": "",
-  "releaseNotesUrl": "https://github.com/bupocc/DeskBox/releases/tag/v1.5.9.3",
+  "releaseNotesUrl": "https://github.com/bupocc/DeskBox/releases/tag/v1.5.9.4",
   "summary": {
     "zh-CN": "番茄钟格子、引导页卡片、每格子独立置顶，更新通道改为本仓库发布。",
     "en-US": "Pomodoro widget, onboarding card, per-widget always-on-top, and updates served from this repository."
