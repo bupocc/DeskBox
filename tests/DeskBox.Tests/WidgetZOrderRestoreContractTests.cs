@@ -362,7 +362,15 @@ public sealed class WidgetZOrderRestoreContractTests
             "WidgetExpandedLayerLeasePolicy.Acquire(",
             acquire,
             StringComparison.Ordinal);
-        Assert.Contains("EnsurePeerOrderHighestToLowest", acquire, StringComparison.Ordinal);
+        // Only the expanded widget moves. Ordering the whole visible group here
+        // pulled every untouched widget up with the clicked one, so the acquire
+        // path raises the owner through the single-window desktop-band helper
+        // and leaves siblings in whatever band they already rest in.
+        Assert.Contains(
+            "TryBringAbovePeerWidgetsAtDesktopLayer(windowHandle)",
+            acquire,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("EnsurePeerOrderHighestToLowest", acquire, StringComparison.Ordinal);
         Assert.DoesNotContain("MoveToDesktopBottom", acquire, StringComparison.Ordinal);
     }
 

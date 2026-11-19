@@ -66,7 +66,10 @@ public abstract partial class WidgetWindowBase
     /// <summary>Reapplies the persisted pin state after a toggle or a restart.</summary>
     public void ApplyAlwaysOnTopPreference()
     {
-        if (!Visible || IsClosing || HWnd == IntPtr.Zero)
+        // A toggle lands while the flyout closes and the layout is being
+        // rewritten, so Visible can be transiently false here. The pin still
+        // has to land: a hidden window accepts WS_EX_TOPMOST and keeps it.
+        if (IsClosing || HWnd == IntPtr.Zero)
         {
             return;
         }

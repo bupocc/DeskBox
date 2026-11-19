@@ -300,17 +300,17 @@ public sealed partial class WidgetManager
             return _expandedWidgetLayerLease.Generation;
         }
 
-        List<IntPtr> peerOrder = [windowHandle];
-        peerOrder.AddRange(
-            GetWindowsInIdleHighestFirstOrder(
-                    GetLoadedDesktopWindows().Where(window =>
-                        window.Visible && window.WindowHandle != windowHandle))
-                .Select(window => window.WindowHandle));
-        bool applied = WidgetLayerService.EnsurePeerOrderHighestToLowest(peerOrder);
+        // Only the expanded widget moves. Ordering the whole visible group here
+        // lifted every sibling widget into the raised band, so clicking one
+        // widget dragged all of them above the applications they were resting
+        // behind. Siblings keep their own band; the expanded widget is placed
+        // above them but still beneath normal applications until the user
+        // interacts with it.
+        bool applied = WidgetLayerService.TryBringAbovePeerWidgetsAtDesktopLayer(windowHandle);
         App.LogVerbose(
             $"[ZOrder] Expanded lease acquired reason={reason} " +
             $"generation={_expandedWidgetLayerLease.Generation} " +
-            $"owner=0x{windowHandle.ToInt64():X} peers={peerOrder.Count} applied={applied}");
+            $"owner=0x{windowHandle.ToInt64():X} peers=0 applied={applied}");
         return _expandedWidgetLayerLease.Generation;
     }
 

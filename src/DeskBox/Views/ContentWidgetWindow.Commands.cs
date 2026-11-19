@@ -1009,6 +1009,10 @@ public sealed partial class ContentWidgetWindow
         _config.IsAlwaysOnTop = value;
         SettingsService.UpdateWidget(_config);
         ApplyAlwaysOnTopPreference();
+        // Persisting the widget rereads the layout, which can bed the window
+        // again right after the toggle; reapply once the write has landed so
+        // the pin survives that reload.
+        DispatcherQueue.TryEnqueue(ApplyAlwaysOnTopPreference);
     }
 
     // ── Title rename ───────────────────────────────────────────
